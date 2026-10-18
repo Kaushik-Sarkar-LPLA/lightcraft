@@ -199,6 +199,111 @@ pub fn detect(img: &Rgba8, faces: &[FaceBox], sensitivity: f32) -> Vec<Blemish> 
     out
 }
 
+/// A [`FaceBox`] from a normalized face rectangle `(x0, y0, x1, y1)` when 5-point landmarks are
+/// not available (for example, XMP face regions or classical skin-region detection): places
+/// proportional eye, nose, and mouth landmarks inside the box so [`detect`] still cuts out facial
+/// features.
+pub fn face_from_rect(x0: f64, y0: f64, x1: f64, y1: f64) -> FaceBox {
+    let (cx, cy) = ((x0 + x1) * 0.5, (y0 + y1) * 0.5);
+    let (fw, fh) = ((x1 - x0).max(0.0), (y1 - y0).max(0.0));
+    FaceBox {
+        x0,
+        y0,
+        x1,
+        y1,
+        landmarks: [
+            (cx - fw * 0.20, cy - fh * 0.12),
+            (cx + fw * 0.20, cy - fh * 0.12),
+            (cx, cy + fh * 0.08),
+            (cx - fw * 0.15, cy + fh * 0.28),
+            (cx + fw * 0.15, cy + fh * 0.28),
+        ],
+    }
+}
+
+/// Classical skin-region fallback when no YuNet detector or XMP face regions are available:
+/// groups skin-tone pixels on an 8×8 grid so eye/brow/mouth gaps stay connected inside a face,
+/// keeps face-proportioned regions at least [`MIN_FACE_PX`] wide, and returns up to 4 [`FaceBox`]es
+/// with canonical proportional landmarks.
+pub fn detect_skin_faces(img: &Rgba8) -> Vec<FaceBox> {
+    let (w, h) = (img.width, img.height);
+    if (w as f64) < MIN_FACE_PX || (h as f64) < MIN_FACE_PX {
+        return Vec::new();
+    }
+    const STEP: usize = 8;
+    let (gw, gh) = (w.div_ceil(STEP), h.div_ceil(STEP));
+    let mut grid = vec![false; gw * gh];
+    for gy in 0..gh {
+        for gx in 0..gw {
+            let mut skin_px = 0usize;
+            let mut total_px = 0usize;
+            for yy in (gy * STEP)..((gy + 1) * STEP).min(h) {
+                for xx in (gx * STEP)..((gx + 1) * STEP).min(w) {
+                    total_px += 1;
+                    if let Some(p) = img.data.get(yy * w + xx) {
+                        let (r, g, b) = (f64::from(p[0]), f64::from(p[1]), f64::from(p[2]));
+                        let cr = 128.0 + 0.5 * r - 0.4187 * g - 0.0813 * b;
+                        let cb = 128.0 - 0.1687 * r - 0.3313 * g + 0.5 * b;
+                        if (133.0..180.0).contains(&cr) && (77.0..130.0).contains(&cb) {
+                            skin_px += 1;
+                        }
+                    }
+                }
+            }
+            if let Some(cell) = grid.get_mut(gy * gw + gx) {
+                *cell = skin_px * 4 >= total_px.max(1);
+            }
+        }
+    }
+    let mut seen = vec![false; gw * gh];
+    let mut candidates: Vec<(usize, FaceBox)> = Vec::new();
+    for start in 0..gw * gh {
+        if seen.get(start).copied().unwrap_or(true) || !grid.get(start).copied().unwrap_or(false) {
+            continue;
+        }
+        let mut stack = vec![start];
+        if let Some(s) = seen.get_mut(start) {
+            *s = true;
+        }
+        let mut cells = 0usize;
+        let (mut x0, mut x1, mut y0, mut y1) = (gw, 0usize, gh, 0usize);
+        while let Some(i) = stack.pop() {
+            let (gx, gy) = (i % gw, i / gw);
+            cells += 1;
+            (x0, x1, y0, y1) = (x0.min(gx), x1.max(gx), y0.min(gy), y1.max(gy));
+            for dy in -1isize..=1 {
+                for dx in -1isize..=1 {
+                    let (nx, ny) = (gx as isize + dx, gy as isize + dy);
+                    if nx >= 0 && ny >= 0 && (nx as usize) < gw && (ny as usize) < gh {
+                        let j = ny as usize * gw + nx as usize;
+                        if !seen.get(j).copied().unwrap_or(true) && grid.get(j).copied().unwrap_or(false) {
+                            if let Some(s) = seen.get_mut(j) {
+                                *s = true;
+                            }
+                            stack.push(j);
+                        }
+                    }
+                }
+            }
+        }
+        let (px0, py0) = (x0 * STEP, y0 * STEP);
+        let (px1, py1) = (((x1 + 1) * STEP).min(w), ((y1 + 1) * STEP).min(h));
+        let (fw, fh) = (px1.saturating_sub(px0) as f64, py1.saturating_sub(py0) as f64);
+        let box_cells = (x1 - x0 + 1) * (y1 - y0 + 1);
+        let fill = cells as f64 / box_cells.max(1) as f64;
+        let aspect = if fw > 0.0 { fh / fw } else { 0.0 };
+        // Reject tiny regions, full-frame warm backgrounds (>85% of frame), or non-portrait shapes.
+        if fw >= MIN_FACE_PX && (0.55..=2.2).contains(&aspect) && fill >= 0.30 && fw * fh <= 0.85 * (w * h) as f64 {
+            candidates.push((
+                cells,
+                face_from_rect(px0 as f64 / w as f64, py0 as f64 / h as f64, px1 as f64 / w as f64, py1 as f64 / h as f64),
+            ));
+        }
+    }
+    candidates.sort_by(|a, b| b.0.cmp(&a.0));
+    candidates.into_iter().take(4).map(|(_, f)| f).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -284,5 +389,15 @@ mod tests {
         let inverted = FaceBox { x0: 0.9, y0: 0.9, x1: 0.1, y1: 0.1, landmarks: [(0.5, 0.5); 5] };
         assert!(detect(&img, &[weird, inverted], 100.0).is_empty());
         assert!(detect(&Rgba8::new(0, 0), &[inverted], 50.0).is_empty());
+    }
+
+    #[test]
+    fn skin_face_fallback_finds_blemishes_without_detector() {
+        let dots = [(-0.28, 0.08), (0.3, 0.12), (-0.2, 0.3)];
+        let (img, _) = scene(800, 600, 300.0, &dots);
+        let faces = detect_skin_faces(&img);
+        assert_eq!(faces.len(), 1, "{faces:?}");
+        let found = detect(&img, &faces, 50.0);
+        assert_eq!(found.len(), 3, "{found:?}");
     }
 }

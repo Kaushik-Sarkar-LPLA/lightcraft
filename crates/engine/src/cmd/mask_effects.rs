@@ -260,6 +260,53 @@ pub(crate) fn upsert(s: &mut Session, e: MaskEffect) {
     }
 }
 
+/// Populate the session's effect presets with standard Portrait & Retouching presets (Soften Skin,
+/// Soften Skin Lite, Enhance Eyes, Whiten Teeth, Enhance Lips, Dodge, Burn).
+pub fn seed_retouch_effects(s: &mut Session) {
+    let presets = [
+        (
+            "Soften Skin",
+            "Portrait",
+            LocalAdjustments { texture: -25.0, clarity: -35.0, shadows: 8.0, highlights: -8.0, sharpness: 10.0, ..Default::default() },
+        ),
+        (
+            "Soften Skin (Lite)",
+            "Portrait",
+            LocalAdjustments { texture: -15.0, clarity: -20.0, shadows: 5.0, ..Default::default() },
+        ),
+        (
+            "Enhance Eyes",
+            "Portrait",
+            LocalAdjustments { exposure: 0.25, contrast: 15.0, clarity: 25.0, texture: 20.0, saturation: 15.0, sharpness: 25.0, ..Default::default() },
+        ),
+        (
+            "Whiten Teeth",
+            "Portrait",
+            LocalAdjustments { exposure: 0.30, whites: 20.0, saturation: -35.0, temp: -10.0, ..Default::default() },
+        ),
+        (
+            "Enhance Lips",
+            "Portrait",
+            LocalAdjustments { saturation: 20.0, contrast: 12.0, clarity: 10.0, tint: 8.0, ..Default::default() },
+        ),
+        ("Dodge (Lighten)", "Retouch", LocalAdjustments { exposure: 0.35, shadows: 15.0, ..Default::default() }),
+        ("Burn (Darken)", "Retouch", LocalAdjustments { exposure: -0.35, highlights: -15.0, ..Default::default() }),
+    ];
+    for (name, group, adjust) in presets {
+        upsert(
+            s,
+            MaskEffect {
+                name: name.into(),
+                group: group.into(),
+                adjust,
+                ..Default::default()
+            }
+            .normalized(),
+        );
+    }
+    let _ = s.save_prefs();
+}
+
 fn name_param(p: &Value, c: &str) -> Result<String> {
     name_of(p, "name", c)
 }

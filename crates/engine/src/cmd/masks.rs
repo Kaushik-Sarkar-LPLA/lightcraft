@@ -25,6 +25,15 @@ fn shape_from(kind: &str, p: &Value, c: &str) -> Result<MaskShape> {
         "sky" => MaskShape::Sky,
         "subject" => MaskShape::Subject,
         "background" => MaskShape::Background,
+        "people" => {
+            let person = p.get("person").and_then(Value::as_u64).unwrap_or(0) as u32;
+            let parts: Vec<String> = p
+                .get("parts")
+                .and_then(Value::as_array)
+                .map(|a| a.iter().filter_map(Value::as_str).map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect())
+                .unwrap_or_else(|| vec!["Skin".into()]);
+            MaskShape::People { person, parts }
+        }
         "luminanceRange" => MaskShape::LuminanceRange {
             lo: f64_or(p, "lo", 0.6),
             hi: f64_or(p, "hi", 1.0),
@@ -46,7 +55,7 @@ fn shape_from(kind: &str, p: &Value, c: &str) -> Result<MaskShape> {
         other => {
             return Err(bad(
                 c,
-                format!("unknown mask kind `{other}` (brush|linear|radial|sky|subject|background|luminanceRange|colorRange|object|prompt)"),
+                format!("unknown mask kind `{other}` (brush|linear|radial|sky|subject|background|people|luminanceRange|colorRange|object|prompt)"),
             ));
         }
     })
@@ -790,23 +799,42 @@ pub fn specs() -> Vec<CommandSpec> {
             |s, p| {
                 let c = "spot.findBlemishes";
                 let id = s.active().ok_or_else(|| bad(c, "no active photo"))?;
-                let detector = super::face_detect::detector(s).map_err(|e| e.into_error(c))?;
                 // the uncropped photo, so positions are the spots' own coordinates
                 let job = s.render_job(id, 1600, 1600, false, false).ok_or_else(|| bad(c, "no photo"))?;
                 let img = job.run().rendered.map_err(|e| bad(c, e))?.image;
-                let rgb: Vec<u8> = img.data.iter().flat_map(|px| [px[0], px[1], px[2]]).collect();
-                let faces =
-                    detector.detect(&rgb, img.width, img.height, &lightcraft_faces::yunet::Options::default()).map_err(|e| bad(c, e.to_string()))?;
-                let boxes: Vec<lightcraft_pipeline::blemish::FaceBox> = faces
-                    .iter()
-                    .map(|f| lightcraft_pipeline::blemish::FaceBox {
-                        x0: f64::from(f.x0),
-                        y0: f64::from(f.y0),
-                        x1: f64::from(f.x1),
-                        y1: f64::from(f.y1),
-                        landmarks: f.landmarks.map(|(x, y)| (f64::from(x), f64::from(y))),
-                    })
-                    .collect();
+                let mut boxes: Vec<lightcraft_pipeline::blemish::FaceBox> = match super::face_detect::detector(s) {
+                    Ok(detector) => {
+                        let rgb: Vec<u8> = img.data.iter().flat_map(|px| [px[0], px[1], px[2]]).collect();
+                        let faces = detector
+                            .detect(&rgb, img.width, img.height, &lightcraft_faces::yunet::Options::default())
+                            .map_err(|e| bad(c, e.to_string()))?;
+                        faces
+                            .iter()
+                            .map(|f| lightcraft_pipeline::blemish::FaceBox {
+                                x0: f64::from(f.x0),
+                                y0: f64::from(f.y0),
+                                x1: f64::from(f.x1),
+                                y1: f64::from(f.y1),
+                                landmarks: f.landmarks.map(|(x, y)| (f64::from(x), f64::from(y))),
+                            })
+                            .collect()
+                    }
+                    Err(_) => Vec::new(),
+                };
+                if boxes.is_empty() {
+                    if let Some(p) = s.catalog.photo(id) {
+                        boxes = p
+                            .meta
+                            .regions
+                            .iter()
+                            .filter(|r| r.kind == lightcraft_meta::RegionKind::Face)
+                            .map(|r| lightcraft_pipeline::blemish::face_from_rect(r.rect.x0, r.rect.y0, r.rect.x1, r.rect.y1))
+                            .collect();
+                    }
+                }
+                if boxes.is_empty() {
+                    boxes = lightcraft_pipeline::blemish::detect_skin_faces(&img);
+                }
                 let max_per_face = (f64_or(p, "maxPerFace", 6.0) as usize).clamp(1, 20);
                 let mut found = lightcraft_pipeline::blemish::detect(&img, &boxes, f64_or(p, "sensitivity", 50.0) as f32);
                 let mut per_face = std::collections::BTreeMap::new();

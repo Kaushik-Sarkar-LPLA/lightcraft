@@ -93,10 +93,11 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
     egui::Frame::NONE.inner_margin(egui::Margin { left: 24, right: 22, top: 0, bottom: 10 }).show(ui, |ui| {
         ui.label(egui::RichText::new(crate::i18n::tr("Create New Mask")).color(t.text_dim));
         ui.add_space(6.0);
-        let tiles: [(&str, &str, Icon); 10] = [
+        let tiles: [(&str, &str, Icon); 11] = [
             ("object", "Object", Icon::Subject),
             ("prompt", "Describe", Icon::Subject),
             ("subject", "Subject", Icon::Subject),
+            ("people", "People", Icon::Subject),
             ("sky", "Sky", Icon::Sky),
             ("background", "Background", Icon::Subject),
             ("brush", "Brush", Icon::Brush),
@@ -659,6 +660,79 @@ fn range_controls(app: &mut LightcraftApp, ui: &mut egui::Ui, comp: usize, shape
                 app.run("mask.update", json!({"component": comp, "shape": MaskShape::ColorRange { samples: samples.clone(), refine: v }}))
             });
         }
+        MaskShape::People { person, parts } => {
+            ui.add_space(4.0);
+            ui.label(egui::RichText::new(crate::i18n::tr("Portrait Parts")).color(t.text_dim).size(11.5));
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing.y = 4.0;
+                for (part, label) in [
+                    ("Skin", "Skin"),
+                    ("Lips", "Lips"),
+                    ("Eyes", "Eyes"),
+                    ("Teeth", "Teeth"),
+                    ("Hair", "Hair"),
+                    ("Entire Person", "Entire Person"),
+                ] {
+                    let active = if part == "Entire Person" {
+                        parts.is_empty() || parts.iter().any(|p| p.eq_ignore_ascii_case("Entire Person") || p.eq_ignore_ascii_case("person"))
+                    } else {
+                        parts.iter().any(|p| p.eq_ignore_ascii_case(part))
+                    };
+                    if text_button(ui, &format!("peoplePart:{comp}:{part}"), crate::i18n::tr(label), active).clicked() {
+                        let next_parts: Vec<String> = if part == "Entire Person" {
+                            vec!["Entire Person".into()]
+                        } else {
+                            let mut cur: Vec<String> = parts
+                                .iter()
+                                .filter(|p| !p.eq_ignore_ascii_case("Entire Person") && !p.eq_ignore_ascii_case("person"))
+                                .cloned()
+                                .collect();
+                            if let Some(pos) = cur.iter().position(|p| p.eq_ignore_ascii_case(part)) {
+                                if cur.len() > 1 {
+                                    cur.remove(pos);
+                                }
+                            } else {
+                                cur.push(part.into());
+                            }
+                            cur
+                        };
+                        update(app, MaskShape::People { person: *person, parts: next_parts });
+                    }
+                }
+            });
+            ui.add_space(6.0);
+            ui.label(egui::RichText::new(crate::i18n::tr("Portrait Retouch")).color(t.text_dim).size(11.5));
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing.y = 4.0;
+                for (id, label, part, values) in [
+                    (
+                        "retouchSkin",
+                        "Soften Skin",
+                        Some("Skin"),
+                        json!({"texture": -25.0, "clarity": -35.0, "shadows": 8.0, "highlights": -8.0, "sharpness": 10.0}),
+                    ),
+                    ("retouchEyes", "Enhance Eyes", Some("Eyes"), json!({"exposure": 0.25, "contrast": 15.0, "clarity": 25.0, "texture": 20.0, "saturation": 15.0, "sharpness": 25.0})),
+                    ("retouchTeeth", "Whiten Teeth", Some("Teeth"), json!({"exposure": 0.30, "whites": 20.0, "saturation": -35.0, "temp": -10.0})),
+                    ("retouchLips", "Enhance Lips", Some("Lips"), json!({"saturation": 20.0, "contrast": 12.0, "clarity": 10.0, "tint": 8.0})),
+                    ("retouchDodge", "Dodge", None, json!({"exposure": 0.35, "shadows": 15.0})),
+                    ("retouchBurn", "Burn", None, json!({"exposure": -0.35, "highlights": -15.0})),
+                ] {
+                    if text_button(ui, &format!("{id}:{comp}"), crate::i18n::tr(label), false).clicked() {
+                        if let Some(target_part) = part {
+                            update(app, MaskShape::People { person: *person, parts: vec![target_part.into()] });
+                        }
+                        let mut full: serde_json::Map<String, serde_json::Value> =
+                            LOCAL.iter().map(|s| (s.id.to_string(), json!(0.0))).collect();
+                        if let Some(obj) = values.as_object() {
+                            for (k, v) in obj {
+                                full.insert(k.clone(), v.clone());
+                            }
+                        }
+                        let _ = app.run("mask.adjust", json!({"values": full}));
+                    }
+                }
+            });
+        }
         _ => {}
     }
 }
@@ -829,6 +903,7 @@ fn component_menu(app: &mut LightcraftApp, ui: &mut egui::Ui, op: &str) {
         ("radial", "Radial Gradient"),
         ("sky", "Sky"),
         ("subject", "Subject"),
+        ("people", "People"),
         ("luminanceRange", "Luminance Range"),
     ] {
         // painting only adds or erases

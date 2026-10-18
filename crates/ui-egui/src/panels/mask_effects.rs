@@ -291,6 +291,9 @@ fn menu(app: &mut LightcraftApp, ui: &mut egui::Ui, mask: &Mask, current: Option
         open_manage(app);
         ui.close();
     }
+    if item(ui, "maskEffectMenu:loadRetouch", crate::i18n::tr("Load Portrait & Retouch Presets").to_string(), true) {
+        fx::seed_retouch_effects(&mut app.session);
+    }
     if item(ui, "maskEffectMenu:import", crate::i18n::tr("Import Presets…").to_string(), app.services.pick_preset_files.is_some()) {
         let _ = app.run("file.importPresets", json!({}));
         ui.close();

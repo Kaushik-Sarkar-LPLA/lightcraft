@@ -424,25 +424,46 @@ fn remove(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
         ui.add_space(8.0);
         ui.label(crate::i18n::tr_format!("{} spot(s) on this photo", d.spots.len()));
         ui.add_space(4.0);
-        if text_button(ui, "findDust", crate::i18n::tr("Find Dust Spots"), false)
-            .on_hover_text(crate::i18n::tr("Heal the small, soft dark spots sensor dust leaves on smooth areas"))
-            .clicked()
-        {
-            match app.run("spot.findDust", json!({})) {
-                Ok(r) => {
-                    let n = r["added"].as_u64().unwrap_or(0);
-                    app.toast(
-                        ui.ctx(),
-                        if n == 0 {
-                            crate::i18n::tr("No dust spots found").to_string()
-                        } else {
-                            crate::i18n::tr_format!("Healed {n} dust spot{}", if n == 1 { "" } else { "s" }, n = n)
-                        },
-                    );
+        ui.horizontal_wrapped(|ui| {
+            if text_button(ui, "findDust", crate::i18n::tr("Find Dust Spots"), false)
+                .on_hover_text(crate::i18n::tr("Heal the small, soft dark spots sensor dust leaves on smooth areas"))
+                .clicked()
+            {
+                match app.run("spot.findDust", json!({})) {
+                    Ok(r) => {
+                        let n = r["added"].as_u64().unwrap_or(0);
+                        app.toast(
+                            ui.ctx(),
+                            if n == 0 {
+                                crate::i18n::tr("No dust spots found").to_string()
+                            } else {
+                                crate::i18n::tr_format!("Healed {n} dust spot{}", if n == 1 { "" } else { "s" }, n = n)
+                            },
+                        );
+                    }
+                    Err(e) => app.toast(ui.ctx(), e),
                 }
-                Err(e) => app.toast(ui.ctx(), e),
             }
-        }
+            if text_button(ui, "findBlemishes", crate::i18n::tr("Find Blemishes"), false)
+                .on_hover_text(crate::i18n::tr("Heal small dark or red skin blemishes on faces"))
+                .clicked()
+            {
+                match app.run("spot.findBlemishes", json!({})) {
+                    Ok(r) => {
+                        let n = r["added"].as_u64().unwrap_or(0);
+                        app.toast(
+                            ui.ctx(),
+                            if n == 0 {
+                                crate::i18n::tr("No blemishes found").to_string()
+                            } else {
+                                crate::i18n::tr_format!("Healed {n} blemish{}", if n == 1 { "" } else { "es" }, n = n)
+                            },
+                        );
+                    }
+                    Err(e) => app.toast(ui.ctx(), e),
+                }
+            }
+        });
         ui.add_space(4.0);
         ui.label(egui::RichText::new(crate::i18n::tr("Paint over a distraction on the photo to remove it.")).color(Tokens::get(ui.ctx()).text_dim));
     });

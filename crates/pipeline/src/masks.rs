@@ -256,7 +256,10 @@ pub fn shape_alpha(shape: &MaskShape, frame: &Frame, w: usize, h: usize, img: &R
         // not computed yet (no clicks, or a build without the model): nothing selected
         MaskShape::Object { hint, .. } if hint.is_empty() => {}
         MaskShape::Prompt { .. } => {}
-        MaskShape::Subject | MaskShape::Object { .. } | MaskShape::People { .. } => {
+        MaskShape::People { parts, .. } => {
+            people_alpha(parts, frame, w, h, img, log_l, gain, &mut out);
+        }
+        MaskShape::Subject | MaskShape::Object { .. } => {
             // Saliency heuristic: centre-weighted local contrast (replaced by the segmenter in M12).
             let m = frame.out_to_norm(w, h);
             let blur = lightcraft_raster::blur::gaussian(log_l, 0.03 * frame_px(frame, w));
@@ -277,6 +280,91 @@ pub fn shape_alpha(shape: &MaskShape, frame: &Frame, w: usize, h: usize, img: &R
         MaskShape::DepthRange { .. } | MaskShape::Landscape { .. } => {}
     }
     out
+}
+
+/// Classical portrait-part heuristic for [`MaskShape::People`] when the source carries no matching
+/// semantic matte: evaluates skin tone (OkLab warm skin locus), lips (higher magenta/red chroma),
+/// teeth (bright, low-chroma ivory with local edge contrast), eyes (high local contrast in upper
+/// face), hair/brows (textured non-skin in upper frame), or the entire person.
+#[allow(clippy::too_many_arguments)]
+fn people_alpha(parts: &[String], frame: &Frame, w: usize, h: usize, img: &Rgb32f, log_l: &Plane, gain: f32, out: &mut Plane) {
+    let mut want_person = parts.is_empty();
+    let (mut want_skin, mut want_lips, mut want_teeth, mut want_eyes, mut want_hair) = (false, false, false, false, false);
+    for p in parts {
+        let s = p.trim().to_ascii_lowercase();
+        match s.as_str() {
+            "person" | "entire person" | "entireperson" => want_person = true,
+            "skin" | "face skin" | "faceskin" | "body skin" | "bodyskin" => want_skin = true,
+            "lips" | "lip" => want_lips = true,
+            "teeth" | "tooth" => want_teeth = true,
+            "eyes" | "eye" | "iris" | "sclera" => want_eyes = true,
+            "hair" | "brows" | "eyebrows" | "facial hair" => want_hair = true,
+            _ => want_person = true,
+        }
+    }
+    let m = frame.out_to_norm(w, h);
+    let blur = lightcraft_raster::blur::gaussian(log_l, 0.025 * frame_px(frame, w));
+    for (i, v) in out.data.iter_mut().enumerate() {
+        let (x, y) = (i % w, i / w);
+        let n = m.apply(Point::new(x as f64 + 0.5, y as f64 + 0.5));
+        let c = tonemap_for_select(img.data[i].map(|v| v * gain));
+        let lab = lightcraft_color::perceptual::oklab_from_2020(c);
+        let (l_ok, a_ok, b_ok) = (lab[0], lab[1], lab[2]);
+        let chroma = a_ok.hypot(b_ok);
+        let contrast = (log_l.data[i] - blur.data[i]).abs();
+        // Skin affinity: warm positive a (redness) and positive b (yellowness) in OkLab, plus r > g >= b.
+        let warm_rgb = smooth(0.0, 0.04, c[0] - c[1]) * smooth(-0.02, 0.03, c[1] - c[2]);
+        let skin_l = smooth(0.20, 0.32, l_ok) * (1.0 - smooth(0.86, 0.96, l_ok));
+        let skin_a = smooth(0.008, 0.022, a_ok) * (1.0 - smooth(0.085, 0.12, a_ok));
+        let skin_b = smooth(0.008, 0.022, b_ok) * (1.0 - smooth(0.11, 0.15, b_ok));
+        let skin = (skin_l * skin_a * skin_b * (0.35 + 0.65 * warm_rgb)).clamp(0.0, 1.0);
+        let mut a = 0.0f32;
+        if want_skin {
+            a = a.max(skin);
+        }
+        if want_lips {
+            // Lips: stronger red/magenta (a_ok) relative to yellow (b_ok) than surrounding skin
+            let face_box = (1.0 - smooth(0.32, 0.48, (n.x as f32 - 0.5).abs()))
+                * smooth(0.15, 0.25, n.y as f32)
+                * (1.0 - smooth(0.75, 0.88, n.y as f32));
+            let lip_l = smooth(0.20, 0.30, l_ok) * (1.0 - smooth(0.76, 0.86, l_ok));
+            let lip_red = smooth(0.045, 0.075, a_ok) * smooth(-0.01, 0.02, a_ok - b_ok * 0.75);
+            a = a.max(face_box * lip_l * lip_red);
+        }
+        if want_teeth {
+            // Teeth: bright, low-chroma ivory inside the portrait area with local edge contrast
+            let face_box = (1.0 - smooth(0.30, 0.45, (n.x as f32 - 0.5).abs()))
+                * smooth(0.18, 0.28, n.y as f32)
+                * (1.0 - smooth(0.75, 0.88, n.y as f32));
+            let bright = smooth(0.55, 0.70, l_ok) * (1.0 - smooth(0.95, 0.995, l_ok));
+            let neutral = 1.0 - smooth(0.025, 0.055, chroma);
+            let edge = smooth(0.02, 0.12, contrast);
+            a = a.max(face_box * bright * neutral * (0.35 + 0.65 * edge));
+        }
+        if want_eyes {
+            // Eyes: high local contrast in the upper-mid portrait region
+            let eye_box = (1.0 - smooth(0.32, 0.46, (n.x as f32 - 0.5).abs()))
+                * smooth(0.12, 0.22, n.y as f32)
+                * (1.0 - smooth(0.58, 0.70, n.y as f32));
+            let detail = smooth(0.04, 0.20, contrast);
+            a = a.max(eye_box * detail * (1.0 - 0.5 * skin));
+        }
+        if want_hair {
+            // Hair & brows: textured or dark non-skin in the upper portrait region
+            let hair_box = (1.0 - smooth(0.38, 0.49, (n.x as f32 - 0.5).abs()))
+                * smooth(0.02, 0.10, n.y as f32)
+                * (1.0 - smooth(0.68, 0.82, n.y as f32));
+            let tex = smooth(0.03, 0.18, contrast).max(1.0 - smooth(0.25, 0.45, l_ok));
+            a = a.max(hair_box * tex * (1.0 - 0.85 * skin));
+        }
+        if want_person {
+            let d = (((n.x - 0.5) / 0.35).powi(2) + ((n.y - 0.55) / 0.4).powi(2)).sqrt() as f32;
+            let sal = (1.0 - smooth(0.6, 1.0, d)) * (0.5 + 0.5 * smooth(0.05, 0.6, contrast));
+            a = a.max(sal.max(skin));
+        }
+        *v = a.clamp(0.0, 1.0);
+    }
+    smooth_plane(out, 0.008 * frame_px(frame, w));
 }
 
 /// A decoded [`SegMask`]: its logits and the normalized rectangle they cover.
@@ -1101,5 +1189,26 @@ mod tests {
         assert!(hair.get(190, 50) > 0.99 && hair.get(10, 50) < 0.01);
         let lips = MaskShape::People { person: 0, parts: vec!["Lips".into()] };
         assert_eq!(eval(&lips), shape_alpha(&lips, &f, w, h, &img, &l, 0.0, None));
+    }
+
+    #[test]
+    fn people_heuristic_selects_skin_and_lips() {
+        let (w, h) = (200, 200);
+        // Neutral grey background, warm skin patch on the left, rose-red lip patch at the centre
+        let img = Rgb32f::from_fn(w, h, |x, y| {
+            if (30..80).contains(&x) && (60..140).contains(&y) {
+                [0.45, 0.25, 0.16] // warm skin
+            } else if (90..120).contains(&x) && (90..120).contains(&y) {
+                [0.45, 0.10, 0.14] // rose-red lips
+            } else {
+                [0.18, 0.18, 0.18] // neutral grey
+            }
+        });
+        let l = img.map(crate::local::log_lum);
+        let f = frame(w, h);
+        let skin = shape_alpha(&MaskShape::People { person: 0, parts: vec!["Skin".into()] }, &f, w, h, &img, &l, 0.0, None);
+        assert!(skin.get(55, 100) > 0.7 && skin.get(10, 10) < 0.05, "skin {} vs bg {}", skin.get(55, 100), skin.get(10, 10));
+        let lips = shape_alpha(&MaskShape::People { person: 0, parts: vec!["Lips".into()] }, &f, w, h, &img, &l, 0.0, None);
+        assert!(lips.get(105, 105) > 0.6 && lips.get(55, 100) < 0.2 && lips.get(10, 10) < 0.05);
     }
 }

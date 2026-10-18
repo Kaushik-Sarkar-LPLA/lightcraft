@@ -82,3 +82,30 @@ fn a_content_aware_spot_has_no_source() {
     assert_eq!(serde_json::to_value(sp).unwrap()["mode"], "fill");
     assert!(s.execute("spot.update", &json!({"mode": "nonsense"})).is_err());
 }
+
+#[test]
+fn portrait_retouching_people_mask_and_find_blemishes() {
+    let mut s = Session::with_demo();
+    // Create a People mask (defaults to Skin) and a custom parts component
+    s.execute("mask.add", &json!({"kind": "people"})).unwrap();
+    s.execute("mask.addComponent", &json!({"op": "add", "kind": "people", "parts": ["Lips", "Eyes"]})).unwrap();
+    let d = s.develop_of(s.active().unwrap()).unwrap();
+    assert_eq!(d.masks.len(), 1);
+    assert_eq!(
+        d.masks[0].components[0].shape,
+        lightcraft_develop::MaskShape::People { person: 0, parts: vec!["Skin".into()] }
+    );
+    assert_eq!(
+        d.masks[0].components[1].shape,
+        lightcraft_develop::MaskShape::People { person: 0, parts: vec!["Lips".into(), "Eyes".into()] }
+    );
+    // Seed Portrait & Retouch presets and apply Soften Skin
+    crate::cmd::mask_effects::seed_retouch_effects(&mut s);
+    assert!(s.mask_effects.iter().any(|e| e.name == "Soften Skin" && e.group == "Portrait"));
+    s.execute("mask.applyEffect", &json!({"name": "Soften Skin"})).unwrap();
+    let adj = s.develop_of(s.active().unwrap()).unwrap().masks[0].adjust;
+    assert_eq!((adj.texture, adj.clarity), (-25.0, -35.0));
+    // spot.findBlemishes runs cleanly without YuNet installed (using the fallback)
+    let r = s.execute("spot.findBlemishes", &json!({})).unwrap();
+    assert!(r.get("added").is_some() && r.get("faces").is_some(), "{r}");
+}
