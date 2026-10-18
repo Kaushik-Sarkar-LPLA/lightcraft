@@ -836,7 +836,8 @@ pub fn specs() -> Vec<CommandSpec> {
                     boxes = lightcraft_pipeline::blemish::detect_skin_faces(&img);
                 }
                 let max_per_face = (f64_or(p, "maxPerFace", 6.0) as usize).clamp(1, 20);
-                let mut found = lightcraft_pipeline::blemish::detect(&img, &boxes, f64_or(p, "sensitivity", 50.0) as f32);
+                let default_sens = s.develop_of(id).map(|d| d.retouch.blemish_sensitivity).unwrap_or(50.0);
+                let mut found = lightcraft_pipeline::blemish::detect(&img, &boxes, f64_or(p, "sensitivity", default_sens) as f32);
                 let mut per_face = std::collections::BTreeMap::new();
                 found.retain(|b| {
                     let n = per_face.entry(b.face).or_insert(0usize);

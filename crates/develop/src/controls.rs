@@ -28,6 +28,7 @@ pub enum Section {
     Calibration,
     PointColor,
     RedEye,
+    Retouch,
 }
 
 impl Section {
@@ -49,6 +50,7 @@ impl Section {
             Section::Calibration => "Calibration",
             Section::PointColor => "Point Color",
             Section::RedEye => "Red Eye",
+            Section::Retouch => "Retouch",
         }
     }
 }
@@ -290,6 +292,11 @@ controls! {
     "calibration.blueHue" => calibration.blue_hue, "Blue Hue", Calibration, -100, 100, 0, 1, 0, Gradient { from: "#30a0d0", to: "#8040d0" };
     "calibration.blueSat" => calibration.blue_sat, "Blue Saturation", Calibration, -100, 100, 0, 1, 0, Gradient { from: "#7a7a7a", to: "#3a60e0" };
     "crop.angle" => crop.geometry.angle, "Straighten", Geometry, -45, 45, 0, 0.01, 2, Centered;
+    "retouch.skinSmooth" => retouch.skin_smooth, "Skin Smoothing", Retouch, 0, 100, 0, 1, 0, Plain;
+    "retouch.skinTexture" => retouch.skin_texture, "Skin Texture", Retouch, 0, 100, 50, 1, 0, Plain;
+    "retouch.skinToneEven" => retouch.skin_tone_even, "Skin Tone Evening", Retouch, 0, 100, 0, 1, 0, Plain;
+    "retouch.shineControl" => retouch.shine_control, "Shine Control", Retouch, 0, 100, 0, 1, 0, Plain;
+    "retouch.blemishSensitivity" => retouch.blemish_sensitivity, "Blemish Sensitivity", Retouch, 0, 100, 50, 1, 0, Plain;
 }
 
 /// Template specs of the indexed controls (`<family>.<field>`; addressed as `<family>.<i>.<field>`).

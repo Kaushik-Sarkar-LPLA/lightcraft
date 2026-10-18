@@ -151,6 +151,7 @@ pub const UI_COMMANDS: &[UiCommand] = &[
     ("section.color", "Color", Some("Cmd+2"), "Window>Edit Sections"),
     ("section.effects", "Effects", Some("Cmd+3"), "Window>Edit Sections"),
     ("section.detail", "Detail", Some("Cmd+4"), "Window>Edit Sections"),
+    ("section.retouch", "Retouch", None, "Window>Edit Sections"),
     ("section.optics", "Optics", Some("Cmd+5"), "Window>Edit Sections"),
     ("section.calibration", "Calibration", None, ""),
     // {on?}; no params toggles. Opening one Edit section closes the others.

@@ -38,6 +38,7 @@ pub mod optics;
 pub mod output;
 pub mod profiles;
 pub mod redeye;
+pub mod retouch;
 pub mod spots;
 pub mod tone;
 pub mod transform;
@@ -446,6 +447,9 @@ pub fn plan<'a>(src: &Rgb32f, info: &SourceInfo, s: &'a DevelopSettings, req: &R
         format!("{eyes:?}"),
         // defringe runs in this stage
         format!("{:?}", s.optics),
+        // portrait & skin retouching runs in this stage
+        s.section_enabled("retouch"),
+        [s.retouch.skin_smooth, s.retouch.skin_texture, s.retouch.skin_tone_even, s.retouch.shine_control].map(f64::to_bits),
         // and the local tone mapping
         local_tone::enabled(info, s),
         src_long,
@@ -458,11 +462,12 @@ pub fn plan<'a>(src: &Rgb32f, info: &SourceInfo, s: &'a DevelopSettings, req: &R
     Plan { settings, frame, w, h, px_per_long, src_long, detail_scale, geo, lin_key, pre_nr_key, eyes, fixed_air, keep, mattes: info.mattes.clone() }
 }
 
-/// Whether the scene-linear stage needs work only the CPU does (defringe, spot removal).
+/// Whether the scene-linear stage needs work only the CPU does (defringe, spot removal, retouching).
 pub fn lin_needs_cpu(s: &DevelopSettings, info: &SourceInfo) -> bool {
     let o = &s.optics;
     let defringe = s.section_enabled("optics") && (o.defringe_purple_amount > 0.0 || o.defringe_green_amount > 0.0);
-    defringe || !s.spots.is_empty() || local_tone::enabled(info, s)
+    let retouch = s.section_enabled("retouch") && s.retouch.is_active();
+    defringe || retouch || !s.spots.is_empty() || local_tone::enabled(info, s)
 }
 
 /// The white-balanced, defringed, retouched image (before noise reduction): the CPU part of the
@@ -475,6 +480,7 @@ pub fn lin_cpu(img: &mut Rgb32f, info: &SourceInfo, p: &Plan<'_>) {
     optics::defringe(img, s, p.px_per_long / optics::DEFRINGE_REF_LONG);
     spots::apply(img, &s.spots, &p.frame, p.px_per_long);
     redeye::apply(img, &p.eyes);
+    retouch::apply(img, s, p.px_per_long);
 }
 
 /// The settings a render of `s` for `req` uses: the HDR edit for an [`OutputDepth::F32Hdr`]

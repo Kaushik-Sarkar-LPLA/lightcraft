@@ -111,7 +111,7 @@ impl DevelopSettings {
     /// Calibration the pipeline switches off where it applies them. Borrowed when every section is on.
     pub fn effective(&self) -> std::borrow::Cow<'_, DevelopSettings> {
         let off = |section: &str| !self.section_enabled(section);
-        if !(off("light") || off("color") || off("detail")) {
+        if !(off("light") || off("color") || off("detail") || off("retouch")) {
             return std::borrow::Cow::Borrowed(self);
         }
         let mut d = self.clone();
@@ -127,6 +127,9 @@ impl DevelopSettings {
         }
         if off("detail") {
             d.reset_section(Section::Detail);
+        }
+        if off("retouch") {
+            d.reset_section(Section::Retouch);
         }
         std::borrow::Cow::Owned(d)
     }
@@ -362,5 +365,26 @@ mod tests {
         assert!(s.enhance.denoise_enabled());
         s.reset_section(Section::Detail);
         assert_eq!(s.enhance.denoise_on, None);
+    }
+
+    #[test]
+    fn default_retouch_is_not_serialized_and_controls_roundtrip() {
+        let s = DevelopSettings::default();
+        assert!(s.to_json().get("retouch").is_none(), "Default Retouch must not change settings JSON or hash64");
+        assert!(!s.retouch.is_active());
+        let mut on = s.clone();
+        assert!(controls::set(&mut on, "retouch.skinSmooth", 45.0));
+        assert!(controls::set(&mut on, "retouch.skinTexture", 65.0));
+        assert!(controls::set(&mut on, "retouch.skinToneEven", 30.0));
+        assert!(controls::set(&mut on, "retouch.shineControl", 25.0));
+        assert!(on.retouch.is_active());
+        assert!(on.to_json().get("retouch").is_some());
+        assert_ne!(on.hash64(), s.hash64());
+        assert_eq!(DevelopSettings::from_json(&on.to_json()).unwrap(), on);
+        on.set_section_enabled("retouch", false);
+        assert!(!on.effective().retouch.is_active());
+        on.set_section_enabled("retouch", true);
+        on.reset_section(Section::Retouch);
+        assert!(on.retouch.is_default());
     }
 }

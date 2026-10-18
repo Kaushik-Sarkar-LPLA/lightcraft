@@ -363,6 +363,56 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
         }
         ui.add_space(8.0);
     });
+    section(app, ui, &d, "retouch", "Retouch", |app, ui, d| {
+        sub_title(ui, crate::i18n::tr("Frequency Separation Skin"));
+        control(app, ui, d, "retouch.skinSmooth", true);
+        control(app, ui, d, "retouch.skinTexture", d.retouch.skin_smooth > 0.0);
+        control(app, ui, d, "retouch.skinToneEven", true);
+        control(app, ui, d, "retouch.shineControl", true);
+        sub_title(ui, crate::i18n::tr("Blemish & Portrait Tools"));
+        control(app, ui, d, "retouch.blemishSensitivity", true);
+        egui::Frame::NONE.inner_margin(egui::Margin { left: 24, right: 22, top: 4, bottom: 4 }).show(ui, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing.y = 4.0;
+                if text_button(ui, "retouchFindBlemishes", crate::i18n::tr("Find Blemishes"), false)
+                    .on_hover_text(crate::i18n::tr("Detect and heal small dark or red skin blemishes on faces"))
+                    .clicked()
+                {
+                    match app.run("spot.findBlemishes", json!({"sensitivity": d.retouch.blemish_sensitivity})) {
+                        Ok(r) => {
+                            let n = r["added"].as_u64().unwrap_or(0);
+                            app.toast(
+                                ui.ctx(),
+                                if n == 0 {
+                                    crate::i18n::tr("No blemishes found").to_string()
+                                } else {
+                                    crate::i18n::tr_format!("Healed {n} blemish{}", if n == 1 { "" } else { "es" }, n = n)
+                                },
+                            );
+                        }
+                        Err(e) => app.toast(ui.ctx(), e),
+                    }
+                }
+                if text_button(ui, "retouchPeopleMask", crate::i18n::tr("Portrait Mask"), false)
+                    .on_hover_text(crate::i18n::tr("Create a People mask for Skin, Eyes, Teeth, or Lips"))
+                    .clicked()
+                {
+                    app.ui.right = RightPanel::Masking;
+                    if let Err(e) = app.run("mask.add", json!({"kind": "people", "parts": ["Skin"]})) {
+                        app.toast(ui.ctx(), e);
+                    }
+                }
+                if text_button(ui, "retouchLoadPresets", crate::i18n::tr("Load Retouch Presets"), false)
+                    .on_hover_text(crate::i18n::tr("Load Soften Skin, Enhance Eyes, Whiten Teeth, Enhance Lips, Dodge, and Burn brush presets"))
+                    .clicked()
+                {
+                    lightcraft_engine::cmd::mask_effects::seed_retouch_effects(&mut app.session);
+                    app.toast(ui.ctx(), crate::i18n::tr("Loaded Portrait & Retouch brush presets"));
+                }
+            });
+        });
+        ui.add_space(8.0);
+    });
     section(app, ui, &d, "optics", "Optics", |app, ui, d| {
         let has_lens = app.session.catalog.photo(id).is_some_and(|p| p.embedded_lens.is_some());
         egui::Frame::NONE.inner_margin(egui::Margin { left: 24, right: 22, top: 4, bottom: 4 }).show(ui, |ui| {

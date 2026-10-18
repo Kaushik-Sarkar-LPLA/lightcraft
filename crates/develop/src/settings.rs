@@ -137,6 +137,10 @@ pub struct DevelopSettings {
     pub red_eye: Vec<RedEye>,
     pub lens_blur: LensBlur,
     pub enhance: Enhance,
+    /// Portrait & skin retouching: frequency-separation skin smoothing, chroma tone evening, and
+    /// specular shine compression. Omitted when at default so existing settings keep their JSON and `hash64`.
+    #[serde(default, skip_serializing_if = "Retouch::is_default")]
+    pub retouch: Retouch,
     /// Camera calibration: shadows tint and primary hue/saturation (applied before tone mapping).
     pub calibration: Calibration,
     /// Section on/off toggles (the "eye" buttons on panel headers): section id → enabled.
@@ -172,6 +176,7 @@ impl Default for DevelopSettings {
             red_eye: Vec::new(),
             lens_blur: LensBlur::default(),
             enhance: Enhance::default(),
+            retouch: Retouch::default(),
             calibration: Calibration::default(),
             disabled_sections: Vec::new(),
         }
@@ -1191,3 +1196,47 @@ impl DevelopSettings {
         std::borrow::Cow::Owned(s)
     }
 }
+
+/// Portrait & skin retouching settings: frequency-separation skin smoothing, chroma tone evening,
+/// specular shine compression, and automatic blemish detection sensitivity.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Retouch {
+    /// Frequency-separation skin smoothing amount (0..100, default 0).
+    pub skin_smooth: f64,
+    /// High-frequency skin pore/texture preservation (0..100, default 50).
+    pub skin_texture: f64,
+    /// Chroma frequency-separation skin tone evening / blotchiness reduction (0..100, default 0).
+    pub skin_tone_even: f64,
+    /// Facial specular highlight / shine compression (0..100, default 0).
+    pub shine_control: f64,
+    /// Sensitivity for automatic facial blemish detection (0..100, default 50).
+    pub blemish_sensitivity: f64,
+}
+
+impl Default for Retouch {
+    fn default() -> Self {
+        Self {
+            skin_smooth: 0.0,
+            skin_texture: 50.0,
+            skin_tone_even: 0.0,
+            shine_control: 0.0,
+            blemish_sensitivity: 50.0,
+        }
+    }
+}
+
+impl Retouch {
+    /// Whether these are the default retouch settings (nothing changed).
+    pub fn is_default(&self) -> bool {
+        *self == Retouch::default()
+    }
+
+    /// Whether any pixel-affecting retouch slider is active (`> 0`).
+    pub fn is_active(&self) -> bool {
+        (self.skin_smooth.is_finite() && self.skin_smooth > 0.0)
+            || (self.skin_tone_even.is_finite() && self.skin_tone_even > 0.0)
+            || (self.shine_control.is_finite() && self.shine_control > 0.0)
+    }
+}
+
