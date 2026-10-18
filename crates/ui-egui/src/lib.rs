@@ -561,9 +561,14 @@ impl LightcraftApp {
     }
 
     /// Supply the browser's separately downloaded Simplified Chinese font before the first frame.
+    /// Rejects non-font bytes (e.g. an SPA fallback returning `index.html` with 200 OK) so
+    /// `epaint` never panics on an invalid `sfnt` signature.
     pub fn with_chinese_font(mut self, bytes: Vec<u8>) -> Self {
-        if !bytes.is_empty() {
+        let valid_sfnt = matches!(bytes.get(..4), Some(b"OTTO" | [0x00, 0x01, 0x00, 0x00] | b"true" | b"ttcf"));
+        if valid_sfnt {
             self.chinese_font = Some(std::sync::Arc::new(egui::FontData::from_owned(bytes)));
+        } else if !bytes.is_empty() {
+            log::warn!("lightcraft: ignoring invalid Chinese font payload ({} bytes)", bytes.len());
         }
         self
     }

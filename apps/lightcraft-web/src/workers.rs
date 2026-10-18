@@ -285,7 +285,7 @@ impl Workers {
     fn on_error(&self, i: usize, e: JsValue) {
         let msg = get(&e, "message").as_string().unwrap_or_else(|| format!("{e:?}"));
         log::error!("render worker {i} failed: {msg}");
-        let mut g = self.0.borrow_mut();
+        let Ok(mut g) = self.0.try_borrow_mut() else { return };
         if let Some(w) = g.workers.get_mut(i) {
             w.dead = true;
             w.worker.terminate();
@@ -309,7 +309,7 @@ impl Workers {
     }
 
     fn on_message(&self, i: usize, data: JsValue) {
-        let mut g = self.0.borrow_mut();
+        let Ok(mut g) = self.0.try_borrow_mut() else { return };
         let g = &mut *g;
         g.ctx.request_repaint();
         let Some(w) = g.workers.get_mut(i) else { return };

@@ -26,8 +26,12 @@
     (async () => {
       // The Chinese font is a separate file: embedding it would exceed the host's WASM size limit.
       // Font-free development builds can still run, with the same missing-glyph warning as before.
-      const chineseFont = fetch("./lightcraft_zh_hans.otf")
-        .then(async response => response.ok ? new Uint8Array(await response.arrayBuffer()) : new Uint8Array())
+      const chineseFont = fetch("./lightcraft_zh_hans.otf", { cache: "no-store" })
+        .then(async response => {
+          if (!response.ok) return new Uint8Array();
+          const b = new Uint8Array(await response.arrayBuffer());
+          return (b.length > 4 && b[0] !== 60) ? b : new Uint8Array();
+        })
         .catch(() => new Uint8Array());
       // Compile once; the render workers (worker.js) instantiate the same compiled module.
       const [module, font] = await Promise.all([

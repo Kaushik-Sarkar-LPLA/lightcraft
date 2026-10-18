@@ -72,8 +72,11 @@ pub fn show_blocking(text: &str) {
 }
 
 /// `panic = "abort"` on wasm: a panic ends the module. Say so on the page instead of leaving a
-/// frozen canvas, and say that the stored library is intact.
+/// frozen canvas, and say that the stored library is intact. Keep the first panic message if
+/// async callbacks panic again afterwards (e.g. `RefCell already borrowed`).
 pub fn install_panic_hook() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    static PANICKED: AtomicBool = AtomicBool::new(false);
     std::panic::set_hook(Box::new(|info| {
         let msg = match (info.payload().downcast_ref::<&str>(), info.payload().downcast_ref::<String>()) {
             (Some(s), _) => (*s).to_string(),
@@ -82,10 +85,12 @@ pub fn install_panic_hook() {
         };
         let at = info.location().map(|l| format!(" at {}:{}", l.file(), l.line())).unwrap_or_default();
         log::error!("LightCraft panicked{at}: {msg}");
-        show_blocking(&format!(
-            "LightCraft stopped after an internal error:\n{msg}\n\nThe library saved in this browser is kept. Reload the page to continue.\n\
-             If it happens again right away, a photo may be the cause: reload with ?workers=0 or report the error."
-        ));
+        if !PANICKED.swap(true, Ordering::SeqCst) {
+            show_blocking(&format!(
+                "LightCraft stopped after an internal error:\n{msg}\n\nThe library saved in this browser is kept. Reload the page to continue.\n\
+                 If it happens again right away, a photo may be the cause: reload with ?workers=0 or report the error."
+            ));
+        }
     }));
 }
 
