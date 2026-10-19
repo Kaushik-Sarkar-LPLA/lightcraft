@@ -921,28 +921,46 @@ pub struct UiState {
     /// The Print dialog's page, selection and drag.
     #[serde(skip)]
     pub print: crate::print_view::PrintUi,
-    /// OpenAI-compatible AI Retouch Director endpoint (defaults to `/api/ai/v1` proxy -> `https://agy.pixilens.app/v1`).
+    /// Internal AI proxy endpoint (`/api/ai/v1`).
     pub ai_endpoint: String,
-    /// AI Retouch Director model ID (defaults to `gemini-4-argon-medium`).
+    /// Internal AI model (`gemini-4-argon-medium`).
     pub ai_model: String,
-    /// Optional client-side API key override (kept only in memory / browser localStorage, never written to library files).
+    /// Optional client-side API key override (never shown in UI).
     #[serde(skip)]
     pub ai_api_key: String,
-    /// Natural-language retouch prompt in the Retouch panel.
+    /// Current message being typed in the floating AI chat.
     #[serde(skip)]
     pub ai_prompt: String,
-    /// Whether the AI endpoint configuration drawer is expanded in the Retouch panel.
+    /// Whether the always-on floating AI chat is expanded (`true`) or collapsed to its floating pill (`false`).
+    #[serde(default = "yes")]
+    pub ai_chat_open: bool,
+    /// Request keyboard focus on the floating AI chat input on the next frame.
     #[serde(skip)]
-    pub ai_config_open: bool,
-    /// Whether an AI Retouch Director request is currently in flight.
+    pub ai_chat_focus: bool,
+    /// Opt-in flag to draw the floating AI chat inside headless unit tests.
+    #[serde(skip)]
+    pub ai_chat_test: bool,
+    /// Conversation history in the floating AI chat.
+    #[serde(skip)]
+    pub ai_messages: Vec<AiChatMessage>,
+    /// Whether an AI request is currently in flight.
     #[serde(skip)]
     pub ai_busy: bool,
-    /// Latest diagnostic summary returned by the AI Retouch Director.
+    /// Latest diagnostic summary returned by the AI assistant.
     #[serde(skip)]
     pub ai_summary: String,
-    /// Queued AI Retouch Director HTTP completion request for the host (`apps/lightcraft-web`) to dispatch asynchronously.
+    /// Queued AI HTTP completion request for the host (`apps/lightcraft-web`) to dispatch asynchronously.
     #[serde(skip)]
     pub ai_pending_request: Option<serde_json::Value>,
+}
+
+/// One message in the floating AI assistant chat.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AiChatMessage {
+    /// `"user"` or `"assistant"`.
+    pub role: String,
+    /// Message text.
+    pub text: String,
 }
 
 /// Settings group ids (`SettingsGroup` serde names) a new preset includes by default: everything
@@ -1417,7 +1435,10 @@ impl Default for UiState {
             ai_model: "gemini-4-argon-medium".into(),
             ai_api_key: String::new(),
             ai_prompt: String::new(),
-            ai_config_open: false,
+            ai_chat_open: true,
+            ai_chat_focus: false,
+            ai_chat_test: false,
+            ai_messages: Vec::new(),
             ai_busy: false,
             ai_summary: String::new(),
             ai_pending_request: None,

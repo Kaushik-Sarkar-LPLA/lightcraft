@@ -632,6 +632,14 @@ impl WebApp {
                     && !s.is_empty()
                 {
                     self.app.ui.ai_summary = s.to_string();
+                    if let Some(last) = self.app.ui.ai_messages.last_mut().filter(|m| m.role == "assistant") {
+                        last.text = s.to_string();
+                    } else {
+                        self.app.ui.ai_messages.push(lightcraft_ui_egui::state::AiChatMessage {
+                            role: "assistant".into(),
+                            text: s.to_string(),
+                        });
+                    }
                     notice(s.to_string());
                 }
             }

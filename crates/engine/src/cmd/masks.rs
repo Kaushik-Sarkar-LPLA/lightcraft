@@ -1024,10 +1024,15 @@ pub fn specs() -> Vec<CommandSpec> {
                     let mut dd = (*s.develop_of(id).unwrap_or_default()).clone();
                     let mut r = analysis.recommended.clone();
 
-                    // Apply natural-language prompt intent on top of telemetry baseline:
+                    // Apply natural-language prompt intent across all image controls (Retouch, Light, WB, Color, Effects, Detail, Treatment):
                     let q = prompt.to_ascii_lowercase();
                     if !q.is_empty() {
-                        if q.contains("natural") || q.contains("subtle") || q.contains("light") {
+                        if q.contains("reset") || q.contains("original") || q.contains("clear all") {
+                            dd = lightcraft_develop::DevelopSettings::default();
+                            r = lightcraft_develop::Retouch::default();
+                            summary = "Reset image adjustments to original.".to_string();
+                        }
+                        if q.contains("natural") || q.contains("subtle") || q.contains("light retouch") {
                             r.skin_smooth = (r.skin_smooth * 0.72).clamp(20.0, 50.0).round();
                             r.skin_texture = 68.0;
                             r.face_slim = 0.0;
@@ -1060,11 +1065,15 @@ pub fn specs() -> Vec<CommandSpec> {
                         }
                         if q.contains("warm") || q.contains("tan") || q.contains("golden") || q.contains("sun") {
                             r.skin_warmth = (r.skin_warmth + 18.0).clamp(15.0, 50.0);
+                            dd.wb.temp = (dd.wb.temp + 14.0).clamp(-100.0, 100.0);
+                        }
+                        if q.contains("cool") || q.contains("cold") || q.contains("blue") {
+                            dd.wb.temp = (dd.wb.temp - 16.0).clamp(-100.0, 100.0);
                         }
                         if q.contains("red") || q.contains("rosacea") || q.contains("flush") {
                             r.skin_redness = (r.skin_redness - 20.0).clamp(-55.0, -15.0);
                         }
-                        if q.contains("eye") || q.contains("bright") || q.contains("catchlight") {
+                        if q.contains("eye") || q.contains("catchlight") {
                             r.eye_brighten = (r.eye_brighten + 20.0).clamp(42.0, 80.0);
                             r.eye_whiten = (r.eye_whiten + 15.0).clamp(30.0, 70.0);
                             r.eye_clarity = (r.eye_clarity + 18.0).clamp(35.0, 75.0);
@@ -1091,9 +1100,78 @@ pub fn specs() -> Vec<CommandSpec> {
                             r.hair_luster = (r.hair_luster + 22.0).clamp(35.0, 75.0);
                             r.stray_hair = (r.stray_hair + 26.0).clamp(40.0, 85.0);
                         }
+                        // Global Light / Tone / Color / Effects controls from chat:
+                        if q.contains("auto tone") || q.contains("balance exposure") {
+                            dd.light.exposure = (dd.light.exposure + 0.25).clamp(-4.0, 4.0);
+                            dd.light.highlights = -24.0;
+                            dd.light.shadows = 28.0;
+                            dd.light.contrast = 12.0;
+                            dd.color.vibrance = 14.0;
+                        }
+                        if q.contains("brighten") || q.contains("brighter") || q.contains("increase exposure") {
+                            dd.light.exposure = (dd.light.exposure + 0.45).clamp(-4.0, 4.0);
+                            dd.light.shadows = (dd.light.shadows + 18.0).clamp(-100.0, 100.0);
+                        }
+                        if q.contains("darken") && !q.contains("background") {
+                            dd.light.exposure = (dd.light.exposure - 0.40).clamp(-4.0, 4.0);
+                        }
+                        if q.contains("darken") && q.contains("background") {
+                            dd.vignette.amount = (dd.vignette.amount - 32.0).clamp(-100.0, 100.0);
+                            dd.light.highlights = (dd.light.highlights - 15.0).clamp(-100.0, 100.0);
+                        }
+                        if q.contains("lift shadow") || q.contains("open shadow") || q.contains("shadows") {
+                            dd.light.shadows = (dd.light.shadows + 28.0).clamp(-100.0, 100.0);
+                        }
+                        if q.contains("highlight") {
+                            dd.light.highlights = (dd.light.highlights - 28.0).clamp(-100.0, 100.0);
+                        }
+                        if q.contains("contrast") || q.contains("punch") || q.contains("pop") {
+                            dd.light.contrast = (dd.light.contrast + 20.0).clamp(-100.0, 100.0);
+                            dd.effects.clarity = (dd.effects.clarity + 12.0).clamp(-100.0, 100.0);
+                        }
+                        if q.contains("cinematic") || q.contains("film") || q.contains("teal") {
+                            dd.light.contrast = 18.0;
+                            dd.light.highlights = -22.0;
+                            dd.light.shadows = 20.0;
+                            dd.color.vibrance = 16.0;
+                            dd.color.saturation = -6.0;
+                            dd.vignette.amount = -22.0;
+                            dd.grain.amount = 14.0;
+                        }
+                        if q.contains("black and white") || q.contains("b&w") || q.contains("monochrome") || q.contains("bw") {
+                            dd.treatment = lightcraft_develop::Treatment::Bw;
+                            dd.light.contrast = (dd.light.contrast + 18.0).clamp(-100.0, 100.0);
+                            dd.effects.clarity = (dd.effects.clarity + 15.0).clamp(-100.0, 100.0);
+                        }
+                        if q.contains("color mode") || q.contains("restore color") {
+                            dd.treatment = lightcraft_develop::Treatment::Color;
+                        }
+                        if q.contains("vibrant") || q.contains("colorful") || q.contains("saturat") {
+                            dd.color.vibrance = (dd.color.vibrance + 24.0).clamp(-100.0, 100.0);
+                            dd.color.saturation = (dd.color.saturation + 10.0).clamp(-100.0, 100.0);
+                        }
+                        if q.contains("desaturat") || q.contains("muted") || q.contains("pastel") {
+                            dd.color.saturation = (dd.color.saturation - 22.0).clamp(-100.0, 100.0);
+                        }
+                        if q.contains("sharp") || q.contains("crisp") || q.contains("detail") {
+                            dd.detail.sharpen_amount = (dd.detail.sharpen_amount + 22.0).clamp(0.0, 150.0);
+                            dd.effects.texture = (dd.effects.texture + 14.0).clamp(-100.0, 100.0);
+                        }
+                        if q.contains("denoise") || q.contains("noise") {
+                            dd.detail.nr_luminance = (dd.detail.nr_luminance + 32.0).clamp(0.0, 100.0);
+                        }
+                        if q.contains("dehaze") || q.contains("haze") || q.contains("fog") {
+                            dd.effects.dehaze = (dd.effects.dehaze + 25.0).clamp(-100.0, 100.0);
+                        }
+                        if q.contains("vignette") {
+                            dd.vignette.amount = (dd.vignette.amount - 26.0).clamp(-100.0, 100.0);
+                        }
+                        if q.contains("grain") {
+                            dd.grain.amount = (dd.grain.amount + 22.0).clamp(0.0, 100.0);
+                        }
                     }
 
-                    // If Gemini / OpenAI returned structured JSON overrides, apply them with safe clamping:
+                    // If AI Vision returned structured JSON overrides, apply them with safe clamping:
                     if let Some(ai) = &parsed_ai {
                         let ret_obj = ai.get("retouch").unwrap_or(ai);
                         let num = |obj: &Value, k1: &str, k2: &str| -> Option<f64> {
@@ -1130,10 +1208,35 @@ pub fn specs() -> Vec<CommandSpec> {
                         if let Some(v) = num(light_obj, "contrast", "contrast") { dd.light.contrast = v.clamp(-100.0, 100.0); }
                         if let Some(v) = num(light_obj, "highlights", "highlights") { dd.light.highlights = v.clamp(-100.0, 100.0); }
                         if let Some(v) = num(light_obj, "shadows", "shadows") { dd.light.shadows = v.clamp(-100.0, 100.0); }
+                        if let Some(v) = num(light_obj, "whites", "whites") { dd.light.whites = v.clamp(-100.0, 100.0); }
+                        if let Some(v) = num(light_obj, "blacks", "blacks") { dd.light.blacks = v.clamp(-100.0, 100.0); }
+
+                        let wb_obj = ai.get("wb").unwrap_or(ai);
+                        if let Some(v) = num(wb_obj, "temp", "temperature") { dd.wb.temp = v.clamp(-100.0, 100.0); }
+                        if let Some(v) = num(wb_obj, "tint", "tint") { dd.wb.tint = v.clamp(-100.0, 100.0); }
 
                         let color_obj = ai.get("color").unwrap_or(ai);
                         if let Some(v) = num(color_obj, "vibrance", "vibrance") { dd.color.vibrance = v.clamp(-100.0, 100.0); }
                         if let Some(v) = num(color_obj, "saturation", "saturation") { dd.color.saturation = v.clamp(-100.0, 100.0); }
+
+                        let effects_obj = ai.get("effects").unwrap_or(ai);
+                        if let Some(v) = num(effects_obj, "texture", "texture") { dd.effects.texture = v.clamp(-100.0, 100.0); }
+                        if let Some(v) = num(effects_obj, "clarity", "clarity") { dd.effects.clarity = v.clamp(-100.0, 100.0); }
+                        if let Some(v) = num(effects_obj, "dehaze", "dehaze") { dd.effects.dehaze = v.clamp(-100.0, 100.0); }
+                        if let Some(v) = num(effects_obj, "vignette", "vignette") { dd.vignette.amount = v.clamp(-100.0, 100.0); }
+                        if let Some(v) = num(effects_obj, "grain", "grain") { dd.grain.amount = v.clamp(0.0, 100.0); }
+
+                        let detail_obj = ai.get("detail").unwrap_or(ai);
+                        if let Some(v) = num(detail_obj, "sharpness", "sharpenAmount") { dd.detail.sharpen_amount = v.clamp(0.0, 150.0); }
+                        if let Some(v) = num(detail_obj, "nrLuminance", "noise") { dd.detail.nr_luminance = v.clamp(0.0, 100.0); }
+
+                        if let Some(tr) = ai.get("treatment").and_then(Value::as_str) {
+                            if tr.eq_ignore_ascii_case("bw") || tr.eq_ignore_ascii_case("monochrome") {
+                                dd.treatment = lightcraft_develop::Treatment::Bw;
+                            } else if tr.eq_ignore_ascii_case("color") {
+                                dd.treatment = lightcraft_develop::Treatment::Color;
+                            }
+                        }
 
                         if summary.is_empty()
                             && let Some(s_txt) = ai.get("summary").and_then(Value::as_str)
@@ -1143,16 +1246,9 @@ pub fn specs() -> Vec<CommandSpec> {
                     }
 
                     if summary.is_empty() {
-                        let mode_tag = if parsed_ai.is_some() {
-                            "Gemini AI"
-                        } else if analysis.neural_detector {
-                            "YuNet ONNX + Oklab"
-                        } else {
-                            "Oklab AI"
-                        };
                         summary = format!(
-                            "{mode_tag}: Smooth {:.0} · Even {:.0} · Shine {:.0} · Dark Circles {:.0} · Eyes {:.0}",
-                            r.skin_smooth, r.skin_tone_even, r.shine_control, r.dark_circles, r.eye_brighten
+                            "Applied AI edits: Smooth {:.0} · Even {:.0} · Shine {:.0} · Dark Circles {:.0} · Exp {:+.2}",
+                            r.skin_smooth, r.skin_tone_even, r.shine_control, r.dark_circles, dd.light.exposure
                         );
                     }
 

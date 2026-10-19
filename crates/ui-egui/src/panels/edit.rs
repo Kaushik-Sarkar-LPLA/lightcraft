@@ -364,27 +364,27 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
         ui.add_space(8.0);
     });
     section(app, ui, &d, "retouch", "Retouch", |app, ui, d| {
-        sub_title(ui, crate::i18n::tr("AI Retouch Director (Gemini / OpenAI)"));
+        sub_title(ui, crate::i18n::tr("AI Portrait Studio"));
         let sel_n = app.session.selection.ids.len();
         egui::Frame::NONE.inner_margin(egui::Margin { left: 24, right: 22, top: 2, bottom: 4 }).show(ui, |ui| {
             let mut trigger_ai: Option<bool> = None;
             ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing.y = 4.0;
                 let auto_label = if app.ui.ai_busy {
-                    crate::i18n::tr("AI Thinking…")
+                    crate::i18n::tr("✨ AI Thinking…")
                 } else {
-                    crate::i18n::tr("✨ AI Auto-Retouch")
+                    crate::i18n::tr("✨ Auto-Retouch")
                 };
                 if text_button(ui, "retouchAiAuto", auto_label, app.ui.ai_busy)
                     .on_hover_text(crate::i18n::tr(
-                        "Analyze portrait with YuNet ONNX neural landmarks + Gemini OpenAI endpoint and dial in all 25 Evoto retouch sliders",
+                        "Automatically analyze portrait lighting, skin, eyes, teeth, and facial structure and dial in all 25 Evoto retouch sliders",
                     ))
                     .clicked()
                 {
                     trigger_ai = Some(false);
                 }
                 if sel_n > 1 {
-                    let batch_ai_label = format!("{} ({sel_n})", crate::i18n::tr("✨ AI Batch"));
+                    let batch_ai_label = format!("{} ({sel_n})", crate::i18n::tr("✨ Batch Auto"));
                     if text_button(ui, "retouchAiBatch", &batch_ai_label, false)
                         .on_hover_text(crate::i18n::tr("Run AI Auto-Retouch across all selected photos"))
                         .clicked()
@@ -392,97 +392,17 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
                         trigger_ai = Some(true);
                     }
                 }
-                let cfg_open = app.ui.ai_config_open;
-                if text_button(ui, "retouchAiConfig", crate::i18n::tr("Endpoint"), cfg_open)
-                    .on_hover_text(crate::i18n::tr("Configure OpenAI-compatible Gemini endpoint, model, and optional API key"))
+                if text_button(ui, "retouchAiChatToggle", crate::i18n::tr("💬 AI Chat"), app.ui.ai_chat_open)
+                    .on_hover_text(crate::i18n::tr("Open or focus the floating AI Studio Chat to edit anything in the image"))
                     .clicked()
                 {
-                    app.ui.ai_config_open = !app.ui.ai_config_open;
+                    app.ui.ai_chat_open = true;
+                    app.ui.ai_chat_focus = true;
                 }
             });
-
-            ui.add_space(4.0);
-            ui.horizontal(|ui| {
-                let prompt_w = (ui.available_width() - 62.0).max(80.0);
-                let resp = ui.add(
-                    egui::TextEdit::singleline(&mut app.ui.ai_prompt)
-                        .hint_text(crate::i18n::tr("Prompt (e.g. remove shine, fix dark circles, editorial)…"))
-                        .desired_width(prompt_w),
-                );
-                let enter_pressed = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
-                if text_button(ui, "retouchAiPromptRun", crate::i18n::tr("Apply"), false)
-                    .on_hover_text(crate::i18n::tr("Send prompt + portrait telemetry to Gemini AI Retouch Director"))
-                    .clicked()
-                    || enter_pressed
-                {
-                    trigger_ai = Some(false);
-                }
-            });
-
-            if app.ui.ai_config_open {
-                ui.add_space(4.0);
-                egui::Grid::new("retouchAiConfigGrid")
-                    .num_columns(2)
-                    .spacing([6.0, 4.0])
-                    .show(ui, |ui| {
-                        ui.label(crate::i18n::tr("Base URL"));
-                        ui.add(
-                            egui::TextEdit::singleline(&mut app.ui.ai_endpoint)
-                                .hint_text("/api/ai/v1 or https://agy.pixilens.app/v1")
-                                .desired_width(f32::INFINITY),
-                        );
-                        ui.end_row();
-
-                        ui.label(crate::i18n::tr("Model"));
-                        ui.add(
-                            egui::TextEdit::singleline(&mut app.ui.ai_model)
-                                .hint_text("gemini-4-argon-medium")
-                                .desired_width(f32::INFINITY),
-                        );
-                        ui.end_row();
-
-                        ui.label(crate::i18n::tr("API Key"));
-                        ui.add(
-                            egui::TextEdit::singleline(&mut app.ui.ai_api_key)
-                                .password(true)
-                                .hint_text(crate::i18n::tr("Optional (proxy injects server key)"))
-                                .desired_width(f32::INFINITY),
-                        );
-                        ui.end_row();
-                    });
-            }
-
-            if !app.ui.ai_summary.is_empty() {
-                ui.add_space(3.0);
-                ui.label(
-                    egui::RichText::new(&app.ui.ai_summary)
-                        .size(11.0)
-                        .color(egui::Color32::from_rgb(168, 196, 232)),
-                );
-            }
 
             if let Some(all_selected) = trigger_ai {
-                let prompt_txt = app.ui.ai_prompt.trim().to_string();
-                let analyze_res = app.run("retouch.analyze", json!({})).ok();
-                match app.run("retouch.aiApply", json!({"prompt": prompt_txt, "allSelected": all_selected})) {
-                    Ok(r) => {
-                        let summary = r["summary"].as_str().unwrap_or("Applied AI Retouch").to_string();
-                        app.ui.ai_summary = summary.clone();
-                        app.toast(ui.ctx(), summary);
-                    }
-                    Err(e) => app.toast(ui.ctx(), e),
-                }
-                if let Some(telemetry) = analyze_res {
-                    app.ui.ai_busy = true;
-                    app.ui.ai_pending_request = Some(json!({
-                        "endpoint": app.ui.ai_endpoint.trim(),
-                        "model": app.ui.ai_model.trim(),
-                        "apiKey": app.ui.ai_api_key.trim(),
-                        "prompt": prompt_txt,
-                        "allSelected": all_selected,
-                        "telemetry": telemetry,
-                    }));
-                }
+                crate::panels::ai_chat::send_message(app, ui.ctx(), "", all_selected);
             }
         });
 

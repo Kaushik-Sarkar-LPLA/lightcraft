@@ -61,22 +61,30 @@
             ? req.prompt.trim()
             : "Auto-retouch this portrait for natural high-end skin texture, balanced shine and under-eye circles, bright eyes, and flattering 3D contour.";
           const sysPrompt =
-            "You are the Evoto.ai Portrait Retouch & Color Director inside LightCraft. " +
-            "Given quantitative portrait telemetry from YuNet ONNX 5-landmark detection and Oklab frequency separation, " +
-            "return ONLY a valid JSON object (no markdown prose outside JSON) with keys: " +
+            "You are the LightCraft & Evoto.ai AI Studio Assistant. " +
+            "You can edit ANYTHING in the photo (Light, White Balance, Color, Effects, Detail, B&W Treatment, and all 25 Portrait Retouch sliders). " +
+            "Given the portrait/image telemetry and user chat instruction, return ONLY a valid JSON object (no markdown outside JSON) with keys: " +
             "{\"retouch\":{\"skinSmooth\":0..100,\"skinTexture\":0..100,\"skinToneEven\":0..100,\"shineControl\":0..100," +
             "\"darkCircles\":0..100,\"wrinkleReduce\":0..100,\"skinRadiance\":-100..100,\"skinWarmth\":-100..100," +
             "\"skinRedness\":-100..100,\"eyeBrighten\":0..100,\"eyeWhiten\":0..100,\"eyeClarity\":0..100," +
             "\"eyebrowEnhance\":-100..100,\"teethWhiten\":0..100,\"lipEnhance\":-100..100,\"lipMoisture\":0..100," +
             "\"faceContour\":0..100,\"faceSlim\":-100..100,\"eyeEnlarge\":-100..100,\"noseSlim\":-100..100," +
             "\"chinLength\":-100..100,\"smileLift\":-100..100,\"hairLuster\":0..100,\"strayHair\":0..100}," +
-            "\"light\":{\"exposure\":-2.0..2.0,\"contrast\":-50..50,\"highlights\":-80..80,\"shadows\":-80..80}," +
-            "\"color\":{\"vibrance\":-50..50,\"saturation\":-50..50}," +
-            "\"summary\":\" concise 1-line summary of the Gemini AI portrait adjustments\"}";
+            "\"light\":{\"exposure\":-3.0..3.0,\"contrast\":-100..100,\"highlights\":-100..100,\"shadows\":-100..100,\"whites\":-100..100,\"blacks\":-100..100}," +
+            "\"wb\":{\"temp\":-100..100,\"tint\":-100..100}," +
+            "\"color\":{\"vibrance\":-100..100,\"saturation\":-100..100}," +
+            "\"effects\":{\"texture\":-100..100,\"clarity\":-100..100,\"dehaze\":-100..100,\"vignette\":-100..100,\"grain\":0..100}," +
+            "\"detail\":{\"sharpness\":0..150,\"nrLuminance\":0..100}," +
+            "\"treatment\":\"color\"|\"bw\"," +
+            "\"summary\":\"Conversational 1-sentence reply explaining what you adjusted in the image\"}";
+          const historyText = Array.isArray(req.history) && req.history.length
+            ? "\nRecent Chat:\n" + req.history.map(m => `${m.role}: ${m.content}`).join("\n")
+            : "";
           const userMsg =
-            "Portrait Telemetry (YuNet ONNX + Oklab):\n" +
+            "Image Telemetry & Current Settings:\n" +
             JSON.stringify(req.telemetry?.analysis || req.telemetry || {}) +
-            "\n\nUser Instruction: " + userGoal +
+            historyText +
+            "\n\nUser Chat Request: " + userGoal +
             "\n\nRespond ONLY with the JSON object.";
           const imageDataUrl = (req.telemetry && typeof req.telemetry.imageDataUrl === "string")
             ? req.telemetry.imageDataUrl
