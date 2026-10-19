@@ -459,7 +459,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
                 }
                 if sel_count > 1 {
                     let sync_label = format!("{} ({sel_count})", crate::i18n::tr("Sync Retouch"));
-                    if text_button(ui, "retouchSyncBatch", sync_label, false)
+                    if text_button(ui, "retouchSyncBatch", &sync_label, false)
                         .on_hover_text(crate::i18n::tr("Sync all Retouch sliders to all selected photos"))
                         .clicked()
                     {
@@ -472,7 +472,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
                         }
                     }
                     let batch_heal_label = format!("{} ({sel_count})", crate::i18n::tr("Batch Heal Blemishes"));
-                    if text_button(ui, "retouchBatchBlemishes", batch_heal_label, false)
+                    if text_button(ui, "retouchBatchBlemishes", &batch_heal_label, false)
                         .on_hover_text(crate::i18n::tr("Run automatic facial blemish detection and healing across all selected photos"))
                         .clicked()
                     {
