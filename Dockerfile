@@ -5,9 +5,10 @@ COPY apps/lightcraft-web/prebuilt/ /tmp/prebuilt/
 RUN curl -fsSL -o lightcraft-web.zip https://github.com/storytold/lightcraft/releases/download/v0.9.1/lightcraft-web-0.9.1.zip && \
     unzip lightcraft-web.zip && \
     mv lightcraft-web-0.9.1 dist && \
-    rm -f dist/index.html.br dist/worker.js.br dist/lightcraft_web.js.br dist/lightcraft_web_bg.wasm.br && \
+    rm -f dist/*.br dist/index.html.gz dist/worker.js.gz dist/lightcraft_web.js.gz dist/lightcraft_web_bg.wasm.gz && \
     cp -f /tmp/prebuilt/* dist/ && \
-    gzip -dk -f dist/lightcraft_web_bg.wasm.gz
+    gzip -dk -f dist/lightcraft_web_bg.wasm.gz && \
+    gzip -k -f -9 dist/index.html dist/worker.js dist/lightcraft_web.js
 
 FROM nginx:alpine
 COPY --from=fetcher /app/dist/ /usr/share/nginx/html/
