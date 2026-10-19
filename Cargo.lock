@@ -3393,6 +3393,7 @@ dependencies = [
  "image",
  "lightcraft-color",
  "lightcraft-develop",
+ "lightcraft-faces",
  "lightcraft-geom",
  "lightcraft-inpaint",
  "lightcraft-raster",

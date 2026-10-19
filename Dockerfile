@@ -28,6 +28,7 @@ server {\n\
     server_name _;\n\
     root /usr/share/nginx/html;\n\
     index index.html;\n\
+    client_max_body_size 10m;\n\
     gzip on;\n\
     gzip_static on;\n\
     gzip_types text/plain text/css application/json application/javascript text/javascript text/xml application/xml application/wasm;\n\
