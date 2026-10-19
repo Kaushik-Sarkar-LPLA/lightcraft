@@ -27,6 +27,18 @@ pub fn send_message(app: &mut LightcraftApp, ctx: &egui::Context, prompt: &str, 
         text: user_display,
     });
 
+    if app.session.active().is_none() {
+        let first_id = app.session.catalog.photos().next().map(|p| p.id);
+        if let Some(first) = first_id {
+            let _ = app.run("photo.select", json!({"id": first.0}));
+        } else {
+            let msg = crate::i18n::tr("Import a photo first, then chat with me to retouch or edit anything in the image.").to_string();
+            app.ui.ai_messages.push(AiChatMessage { role: "assistant".into(), text: msg.clone() });
+            app.toast(ctx, msg);
+            return;
+        }
+    }
+
     // Handle direct undo/redo commands immediately.
     let lower = clean_prompt.to_ascii_lowercase();
     if lower == "undo" || lower == "undo last" {
@@ -60,10 +72,24 @@ pub fn send_message(app: &mut LightcraftApp, ctx: &egui::Context, prompt: &str, 
         return;
     }
 
+    // If the user asked to heal/remove blemishes/acne/spots in chat, run PatchMatch blemish healing too.
+    let mut blemish_note = String::new();
+    if lower.contains("blemish") || lower.contains("acne") || lower.contains("pimple") || lower.contains("heal spot") {
+        if let Ok(r) = app.run("spot.findBlemishes", json!({"allSelected": all_selected})) {
+            let n = r["added"].as_u64().unwrap_or(0);
+            if n > 0 {
+                blemish_note = format!(" Healed {n} blemish{}.", if n == 1 { "" } else { "es" });
+            }
+        }
+    }
+
     // Apply immediate local intent + YuNet ONNX + Oklab analysis first so the canvas updates with zero latency.
     match app.run("retouch.aiApply", json!({"prompt": clean_prompt, "allSelected": all_selected})) {
         Ok(r) => {
-            let summary = r["summary"].as_str().unwrap_or("Applied AI adjustments").to_string();
+            let mut summary = r["summary"].as_str().unwrap_or("Applied AI adjustments").to_string();
+            if !blemish_note.is_empty() {
+                summary.push_str(&blemish_note);
+            }
             app.ui.ai_summary = summary.clone();
             app.ui.ai_messages.push(AiChatMessage {
                 role: "assistant".into(),
@@ -111,9 +137,6 @@ pub fn send_message(app: &mut LightcraftApp, ctx: &egui::Context, prompt: &str, 
 pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
     // Keep existing automated headless tests clear unless they explicitly opt into testing the chat.
     if app.headless_host && !app.ui.ai_chat_test {
-        return;
-    }
-    if app.session.active().is_none() {
         return;
     }
 

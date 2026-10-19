@@ -940,6 +940,9 @@ pub fn specs() -> Vec<CommandSpec> {
                 }
                 let analysis = lightcraft_pipeline::retouch::analyze_portrait(&lin);
                 let cur = s.develop_of(id).unwrap_or_default();
+                let k_to_rel = |k: f64| -> f64 {
+                    ((1e6 / 6500.0 - 1e6 / k.clamp(2000.0, 50000.0)) / 0.8).clamp(-100.0, 100.0)
+                };
                 let file_name = s.catalog.photo(id).map(|ph| ph.file_name.clone()).unwrap_or_default();
                 Ok(json!({
                     "id": id.0,
@@ -952,10 +955,20 @@ pub fn specs() -> Vec<CommandSpec> {
                         "contrast": cur.light.contrast,
                         "highlights": cur.light.highlights,
                         "shadows": cur.light.shadows,
-                        "temp": cur.wb.temp,
+                        "whites": cur.light.whites,
+                        "blacks": cur.light.blacks,
+                        "temp": k_to_rel(cur.wb.temp).round(),
                         "tint": cur.wb.tint,
                         "vibrance": cur.color.vibrance,
                         "saturation": cur.color.saturation,
+                        "texture": cur.effects.texture,
+                        "clarity": cur.effects.clarity,
+                        "dehaze": cur.effects.dehaze,
+                        "vignette": cur.vignette.amount,
+                        "grain": cur.grain.amount,
+                        "sharpness": cur.detail.sharpen_amount,
+                        "nrLuminance": cur.detail.nr_luminance,
+                        "treatment": cur.treatment,
                     }
                 }))
             }
@@ -965,7 +978,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "AI Retouch Director",
             ["Develop"],
             None,
-            "{response?: string, prompt?: string, allSelected?: bool} — apply AI Retouch Director recipe from Gemini/OpenAI JSON completion or YuNet ONNX + Oklab portrait analysis → {changed, summary, neural}",
+            "{response?: string, prompt?: string, allSelected?: bool} — apply AI Studio Assistant recipe from Gemini/OpenAI JSON completion or YuNet ONNX + Oklab image analysis → {changed, summary, neural}",
             has_active,
             |s, p| {
                 let c = "retouch.aiApply";
@@ -995,6 +1008,14 @@ pub fn specs() -> Vec<CommandSpec> {
                     None
                 };
 
+                let rel_to_k = |rel: f64| -> f64 {
+                    let r = rel.clamp(-100.0, 100.0);
+                    (1e6 / (1e6 / 6500.0 - r * 0.8)).clamp(2000.0, 50000.0)
+                };
+                let k_to_rel = |k: f64| -> f64 {
+                    ((1e6 / 6500.0 - 1e6 / k.clamp(2000.0, 50000.0)) / 0.8).clamp(-100.0, 100.0)
+                };
+
                 let mut ops: Vec<lightcraft_catalog::Op> = Vec::new();
                 let mut summary = String::new();
                 let mut any_neural = false;
@@ -1022,18 +1043,38 @@ pub fn specs() -> Vec<CommandSpec> {
                     }
 
                     let mut dd = (*s.develop_of(id).unwrap_or_default()).clone();
-                    let mut r = analysis.recommended.clone();
-
-                    // Apply natural-language prompt intent across all image controls (Retouch, Light, WB, Color, Effects, Detail, Treatment):
                     let q = prompt.to_ascii_lowercase();
+                    let mentions_retouch = q.is_empty()
+                        || q.contains("retouch")
+                        || q.contains("skin")
+                        || q.contains("smooth")
+                        || q.contains("portrait")
+                        || q.contains("face")
+                        || q.contains("shine")
+                        || q.contains("dark circle")
+                        || q.contains("eye bag")
+                        || q.contains("wrinkle")
+                        || q.contains("glamour")
+                        || q.contains("beauty")
+                        || q.contains("editorial")
+                        || q.contains("natural")
+                        || q.contains("male");
+
+                    let mut r = if q.is_empty() || (!dd.retouch.is_active() && mentions_retouch) {
+                        analysis.recommended.clone()
+                    } else {
+                        dd.retouch.clone()
+                    };
+
+                    // Apply natural-language prompt intent across all image controls:
                     if !q.is_empty() {
                         if q.contains("reset") || q.contains("original") || q.contains("clear all") {
                             dd = lightcraft_develop::DevelopSettings::default();
                             r = lightcraft_develop::Retouch::default();
-                            summary = "Reset image adjustments to original.".to_string();
+                            summary = "Reset all image adjustments to original.".to_string();
                         }
                         if q.contains("natural") || q.contains("subtle") || q.contains("light retouch") {
-                            r.skin_smooth = (r.skin_smooth * 0.72).clamp(20.0, 50.0).round();
+                            r.skin_smooth = (r.skin_smooth.max(32.0) * 0.72).clamp(20.0, 50.0).round();
                             r.skin_texture = 68.0;
                             r.face_slim = 0.0;
                             r.eye_enlarge = 0.0;
@@ -1065,10 +1106,14 @@ pub fn specs() -> Vec<CommandSpec> {
                         }
                         if q.contains("warm") || q.contains("tan") || q.contains("golden") || q.contains("sun") {
                             r.skin_warmth = (r.skin_warmth + 18.0).clamp(15.0, 50.0);
-                            dd.wb.temp = (dd.wb.temp + 14.0).clamp(-100.0, 100.0);
+                            let cur_rel = k_to_rel(dd.wb.temp);
+                            dd.wb.temp = rel_to_k(cur_rel + 16.0);
+                            dd.wb.mode = lightcraft_develop::WbMode::Custom;
                         }
-                        if q.contains("cool") || q.contains("cold") || q.contains("blue") {
-                            dd.wb.temp = (dd.wb.temp - 16.0).clamp(-100.0, 100.0);
+                        if q.contains("cool") || q.contains("cold") || q.contains("icy") {
+                            let cur_rel = k_to_rel(dd.wb.temp);
+                            dd.wb.temp = rel_to_k(cur_rel - 16.0);
+                            dd.wb.mode = lightcraft_develop::WbMode::Custom;
                         }
                         if q.contains("red") || q.contains("rosacea") || q.contains("flush") {
                             r.skin_redness = (r.skin_redness - 20.0).clamp(-55.0, -15.0);
@@ -1078,7 +1123,7 @@ pub fn specs() -> Vec<CommandSpec> {
                             r.eye_whiten = (r.eye_whiten + 15.0).clamp(30.0, 70.0);
                             r.eye_clarity = (r.eye_clarity + 18.0).clamp(35.0, 75.0);
                         }
-                        if q.contains("teeth") || q.contains("white") || q.contains("smile") {
+                        if q.contains("teeth") || q.contains("whiten") || q.contains("smile") {
                             r.teeth_whiten = (r.teeth_whiten + 22.0).clamp(45.0, 85.0);
                             r.smile_lift = (r.smile_lift + 15.0).clamp(18.0, 55.0);
                         }
@@ -1100,7 +1145,7 @@ pub fn specs() -> Vec<CommandSpec> {
                             r.hair_luster = (r.hair_luster + 22.0).clamp(35.0, 75.0);
                             r.stray_hair = (r.stray_hair + 26.0).clamp(40.0, 85.0);
                         }
-                        // Global Light / Tone / Color / Effects controls from chat:
+                        // Global Light / Tone / Color / Grading / Effects / Crop controls from chat:
                         if q.contains("auto tone") || q.contains("balance exposure") {
                             dd.light.exposure = (dd.light.exposure + 0.25).clamp(-4.0, 4.0);
                             dd.light.highlights = -24.0;
@@ -1116,7 +1161,7 @@ pub fn specs() -> Vec<CommandSpec> {
                             dd.light.exposure = (dd.light.exposure - 0.40).clamp(-4.0, 4.0);
                         }
                         if q.contains("darken") && q.contains("background") {
-                            dd.vignette.amount = (dd.vignette.amount - 32.0).clamp(-100.0, 100.0);
+                            dd.vignette.amount = (dd.vignette.amount - 34.0).clamp(-100.0, 100.0);
                             dd.light.highlights = (dd.light.highlights - 15.0).clamp(-100.0, 100.0);
                         }
                         if q.contains("lift shadow") || q.contains("open shadow") || q.contains("shadows") {
@@ -1135,6 +1180,10 @@ pub fn specs() -> Vec<CommandSpec> {
                             dd.light.shadows = 20.0;
                             dd.color.vibrance = 16.0;
                             dd.color.saturation = -6.0;
+                            dd.grading.shadows.hue = 204.0;
+                            dd.grading.shadows.sat = 20.0;
+                            dd.grading.highlights.hue = 38.0;
+                            dd.grading.highlights.sat = 18.0;
                             dd.vignette.amount = -22.0;
                             dd.grain.amount = 14.0;
                         }
@@ -1168,6 +1217,42 @@ pub fn specs() -> Vec<CommandSpec> {
                         }
                         if q.contains("grain") {
                             dd.grain.amount = (dd.grain.amount + 22.0).clamp(0.0, 100.0);
+                        }
+                        // Crop aspect ratios & orientation from chat:
+                        let crop_aspect: Option<(u32, u32)> = if q.contains("1:1") || q.contains("1x1") || q.contains("square") {
+                            Some((100, 100))
+                        } else if q.contains("4:5") || q.contains("4x5") || q.contains("5:4") || q.contains("5x4") {
+                            Some((400, 500))
+                        } else if q.contains("16:9") || q.contains("16x9") {
+                            Some((1600, 900))
+                        } else if q.contains("9:16") || q.contains("9x16") {
+                            Some((900, 1600))
+                        } else if q.contains("3:2") || q.contains("3x2") {
+                            Some((300, 200))
+                        } else if q.contains("5:7") || q.contains("5x7") {
+                            Some((500, 700))
+                        } else {
+                            None
+                        };
+                        if let Some((aw, ah)) = crop_aspect {
+                            let ph = s.catalog.photo(id);
+                            let (mut pw, mut ph_h) = ph.map(|p| (p.width.max(1) as f64, p.height.max(1) as f64)).unwrap_or((3.0, 2.0));
+                            if dd.orientation.swaps_axes() {
+                                std::mem::swap(&mut pw, &mut ph_h);
+                            }
+                            dd.crop.aspect = Some((aw, ah));
+                            let ratio = if (pw >= ph_h) == (aw >= ah) {
+                                aw as f64 / ah as f64
+                            } else {
+                                ah as f64 / aw as f64
+                            };
+                            dd.crop.geometry = lightcraft_geom::crop_fit_angle(pw, ph_h, dd.crop.geometry.angle, Some(ratio));
+                        }
+                        if q.contains("flip horizontal") || q.contains("mirror") {
+                            dd.crop.flip_h = !dd.crop.flip_h;
+                        }
+                        if q.contains("flip vertical") {
+                            dd.crop.flip_v = !dd.crop.flip_v;
                         }
                     }
 
@@ -1212,8 +1297,18 @@ pub fn specs() -> Vec<CommandSpec> {
                         if let Some(v) = num(light_obj, "blacks", "blacks") { dd.light.blacks = v.clamp(-100.0, 100.0); }
 
                         let wb_obj = ai.get("wb").unwrap_or(ai);
-                        if let Some(v) = num(wb_obj, "temp", "temperature") { dd.wb.temp = v.clamp(-100.0, 100.0); }
-                        if let Some(v) = num(wb_obj, "tint", "tint") { dd.wb.tint = v.clamp(-100.0, 100.0); }
+                        if let Some(v) = num(wb_obj, "temp", "temperature") {
+                            if v.abs() > 1e-4 {
+                                dd.wb.temp = if v >= 1500.0 { v.clamp(2000.0, 50000.0) } else { rel_to_k(v) };
+                                dd.wb.mode = lightcraft_develop::WbMode::Custom;
+                            }
+                        }
+                        if let Some(v) = num(wb_obj, "tint", "tint") {
+                            if v.abs() > 1e-4 {
+                                dd.wb.tint = v.clamp(-150.0, 150.0);
+                                dd.wb.mode = lightcraft_develop::WbMode::Custom;
+                            }
+                        }
 
                         let color_obj = ai.get("color").unwrap_or(ai);
                         if let Some(v) = num(color_obj, "vibrance", "vibrance") { dd.color.vibrance = v.clamp(-100.0, 100.0); }
@@ -1238,9 +1333,7 @@ pub fn specs() -> Vec<CommandSpec> {
                             }
                         }
 
-                        if summary.is_empty()
-                            && let Some(s_txt) = ai.get("summary").and_then(Value::as_str)
-                        {
+                        if let Some(s_txt) = ai.get("summary").and_then(Value::as_str).filter(|s| !s.trim().is_empty()) {
                             summary = s_txt.trim().to_string();
                         }
                     }
