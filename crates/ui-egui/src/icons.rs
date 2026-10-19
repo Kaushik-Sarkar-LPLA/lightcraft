@@ -103,6 +103,8 @@ pub enum Icon {
     Sun,
     /// Appearance Mode ▸ Dark: a crescent moon.
     Moon,
+    /// AI Studio Chat: a speech bubble with an AI sparkle star.
+    AiChat,
 }
 
 struct Pen<'a> {
@@ -600,6 +602,26 @@ fn paint_with(p: &Painter, rect: Rect, icon: Icon, color: Color32, turn: Option<
             for x in [6.8, 10.0, 13.2] {
                 pen.dot(x, 8.5, 1.1);
             }
+        }
+        AiChat => {
+            // rounded speech bubble with a lower-left tail + 4-point AI sparkle inside
+            pen.closed(&[
+                (4.5, 3.5),
+                (15.5, 3.5),
+                (17.0, 5.0),
+                (17.0, 12.0),
+                (15.5, 13.5),
+                (9.0, 13.5),
+                (5.5, 16.8),
+                (5.5, 13.5),
+                (4.5, 13.5),
+                (3.0, 12.0),
+                (3.0, 5.0),
+            ]);
+            pen.line(&[(10.0, 5.6), (10.0, 11.4)]);
+            pen.line(&[(7.1, 8.5), (12.9, 8.5)]);
+            pen.line(&[(8.4, 6.9), (11.6, 10.1)]);
+            pen.line(&[(11.6, 6.9), (8.4, 10.1)]);
         }
     }
 }

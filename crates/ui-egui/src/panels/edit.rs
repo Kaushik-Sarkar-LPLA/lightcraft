@@ -377,7 +377,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
                 };
                 if text_button(ui, "retouchAiAuto", auto_label, app.ui.ai_busy)
                     .on_hover_text(crate::i18n::tr(
-                        "Automatically analyze portrait lighting, skin, eyes, teeth, and facial structure and dial in all 25 Evoto retouch sliders",
+                        "Automatically analyze portrait lighting, skin, eyes, teeth, facial structure, and body proportions to dial in all retouch sliders",
                     ))
                     .clicked()
                 {
@@ -392,12 +392,11 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
                         trigger_ai = Some(true);
                     }
                 }
-                if text_button(ui, "retouchAiChatToggle", crate::i18n::tr("💬 AI Chat"), app.ui.ai_chat_open)
-                    .on_hover_text(crate::i18n::tr("Open or focus the floating AI Studio Chat to edit anything in the image"))
+                if text_button(ui, "retouchAiChatToggle", crate::i18n::tr("💬 AI Chat"), app.ui.right == crate::state::RightPanel::AiChat)
+                    .on_hover_text(crate::i18n::tr("Open the AI Chat sidebar to edit anything in the image"))
                     .clicked()
                 {
-                    app.ui.ai_chat_open = true;
-                    app.ui.ai_chat_focus = true;
+                    let _ = app.run("panel.aiChat", json!({}));
                 }
             });
 
@@ -406,18 +405,18 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
             }
         });
 
-        sub_title(ui, crate::i18n::tr("Evoto Portrait Presets"));
+        sub_title(ui, crate::i18n::tr("Portrait & Body Presets"));
         egui::Frame::NONE.inner_margin(egui::Margin { left: 24, right: 22, top: 2, bottom: 4 }).show(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing.y = 4.0;
                 for (btn_id, preset_id, label, tip) in [
-                    ("evotoPresetNatural", "lc.evoto-natural", "Natural", "Subtle skin smoothing, dark-circle lift, and eye/teeth pop"),
-                    ("evotoPresetHeadshot", "lc.evoto-headshot", "Headshot", "Clean studio headshot retouching with 3D face sculpt and shine control"),
-                    ("evotoPresetWedding", "lc.evoto-wedding", "Wedding", "Soft luminous bridal glow, warm skin tone, and gentle smile lift"),
-                    ("evotoPresetEditorial", "lc.evoto-editorial", "Editorial", "High-end frequency separation retaining pore texture with 3D contour"),
-                    ("evotoPresetGlamour", "lc.evoto-glamour", "Glamour", "Full beauty retouch, radiant skin, glossy lips, and subtle facial reshape"),
-                    ("evotoPresetMale", "lc.evoto-male", "Male", "High-texture skin cleanup, shine & redness reduction, and crisp eyes"),
-                    ("evotoPresetBody", "lc.evoto-body", "Body Slim", "Overall body slimming, stomach flatten, waist cinch, arm slimming, and leg lengthening"),
+                    ("retouchPresetNatural", "lc.retouch-natural", "Natural", "Subtle skin smoothing, dark-circle lift, and eye/teeth pop"),
+                    ("retouchPresetHeadshot", "lc.retouch-headshot", "Headshot", "Clean studio headshot retouching with 3D face sculpt and shine control"),
+                    ("retouchPresetWedding", "lc.retouch-wedding", "Wedding", "Soft luminous bridal glow, warm skin tone, and gentle smile lift"),
+                    ("retouchPresetEditorial", "lc.retouch-editorial", "Editorial", "High-end frequency separation retaining pore texture with 3D contour"),
+                    ("retouchPresetGlamour", "lc.retouch-glamour", "Glamour", "Full beauty retouch, radiant skin, glossy lips, and subtle facial reshape"),
+                    ("retouchPresetMale", "lc.retouch-male", "Male", "High-texture skin cleanup, shine & redness reduction, and crisp eyes"),
+                    ("retouchPresetBody", "lc.retouch-body", "Body Slim", "Overall body slimming, stomach flatten, waist cinch, arm slimming, and leg lengthening"),
                 ] {
                     if text_button(ui, btn_id, crate::i18n::tr(label), false).on_hover_text(crate::i18n::tr(tip)).clicked()
                         && let Err(e) = app.run("preset.apply", json!({"id": preset_id}))
@@ -426,7 +425,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
                     }
                 }
                 if d.retouch.is_active()
-                    && text_button(ui, "evotoPresetReset", crate::i18n::tr("Reset"), false)
+                    && text_button(ui, "retouchPresetReset", crate::i18n::tr("Reset"), false)
                         .on_hover_text(crate::i18n::tr("Reset all Retouch sliders to zero"))
                         .clicked()
                     && let Err(e) = app.run(

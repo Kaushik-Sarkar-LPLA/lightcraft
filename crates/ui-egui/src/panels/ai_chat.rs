@@ -1,15 +1,16 @@
-//! Always-on floating AI Studio Chat overlay: conversational control over every setting in the
-//! image (Light, Color, White Balance, Grading, Mixer, Effects, Detail, Crop, Masks, Blemish
-//! Healing, and all 25 Evoto Portrait Retouch sliders).
+//! Sidebar AI Studio Chat panel (`RightPanel::AiChat`): persistent conversational control over
+//! every setting in the image (Light, Color, White Balance, Grading, Mixer, Effects, Detail,
+//! Crop, Masks, Blemish Healing, and all 34 Portrait & Body Retouch sliders).
 
-use egui::{Align2, Color32, CornerRadius, Margin, RichText, Sense, Stroke, pos2, vec2};
+use egui::{Color32, CornerRadius, Margin, RichText, Sense, Stroke, vec2};
 use serde_json::json;
 
 use crate::LightcraftApp;
 use crate::state::AiChatMessage;
 use crate::theme::Tokens;
+use crate::widgets::{divider, register};
 
-/// Trigger an AI image edit / chat turn from either the floating chat or the Retouch panel.
+/// Trigger an AI image edit / chat turn from either the AI Chat sidebar or the Retouch panel.
 pub fn send_message(app: &mut LightcraftApp, ctx: &egui::Context, prompt: &str, all_selected: bool) {
     let clean_prompt = prompt.trim().to_string();
     let user_display = if clean_prompt.is_empty() {
@@ -133,75 +134,16 @@ pub fn send_message(app: &mut LightcraftApp, ctx: &egui::Context, prompt: &str, 
     }
 }
 
-/// Draw the always-on floating AI Studio Chat over the photo canvas.
-pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
-    // Keep existing automated headless tests clear unless they explicitly opt into testing the chat.
-    if app.headless_host && !app.ui.ai_chat_test {
-        return;
-    }
+/// Render the AI Studio Chat inside the right-hand sidebar (`RightPanel::AiChat`).
+pub fn show_panel(app: &mut LightcraftApp, ui: &mut egui::Ui) {
+    let ctx = ui.ctx().clone();
+    let t = Tokens::get(&ctx);
+    let sel_n = app.session.selection.ids.len();
 
-    let bounds = app.canvas_rect.unwrap_or_else(|| ctx.content_rect());
-    if bounds.width() < 180.0 || bounds.height() < 120.0 {
-        return;
-    }
-    let t = Tokens::get(ctx);
-
-    // Minimized state: always-visible floating pill in the bottom-right of the photo canvas.
-    if !app.ui.ai_chat_open {
-        let pill_pos = pos2(bounds.right() - 16.0, bounds.bottom() - 16.0);
-        egui::Area::new(egui::Id::new("ai_studio_chat_pill"))
-            .order(egui::Order::Foreground)
-            .pivot(Align2::RIGHT_BOTTOM)
-            .fixed_pos(pill_pos)
-            .show(ctx, |ui| {
-                let frame = egui::Frame::NONE
-                    .fill(Color32::from_rgba_unmultiplied(24, 27, 34, 240))
-                    .corner_radius(CornerRadius::same(18))
-                    .stroke(Stroke::new(1.0, t.accent))
-                    .inner_margin(Margin { left: 14, right: 14, top: 8, bottom: 8 });
-                frame.show(ui, |ui| {
-                    let label = if app.ui.ai_busy {
-                        crate::i18n::tr("✨ AI Thinking…")
-                    } else {
-                        crate::i18n::tr("✨ AI Chat")
-                    };
-                    let resp = ui.add(
-                        egui::Button::new(RichText::new(label).size(12.5).strong().color(Color32::from_rgb(235, 240, 250)))
-                            .frame(false),
-                    );
-                    if resp.clicked() {
-                        app.ui.ai_chat_open = true;
-                        app.ui.ai_chat_focus = true;
-                    }
-                });
-            });
-        return;
-    }
-
-    // Expanded state: floating draggable AI Studio Chat card constrained to the canvas area.
-    let card_w = 336.0f32.min((bounds.width() - 20.0).max(220.0));
-    let default_x = (bounds.right() - card_w - 16.0).max(bounds.left() + 8.0);
-    let default_y = (bounds.bottom() - 348.0).max(bounds.top() + 8.0);
-
-    let window_frame = egui::Frame::NONE
-        .fill(Color32::from_rgba_unmultiplied(22, 24, 30, 244))
-        .corner_radius(CornerRadius::same(10))
-        .stroke(Stroke::new(1.0, Color32::from_rgb(62, 70, 88)))
-        .inner_margin(Margin { left: 12, right: 12, top: 10, bottom: 10 });
-
-    egui::Window::new("ai_studio_chat_window")
-        .title_bar(false)
-        .resizable(false)
-        .collapsible(false)
-        .fixed_size(vec2(card_w, 326.0))
-        .default_pos(pos2(default_x, default_y))
-        .constrain_to(bounds)
-        .order(egui::Order::Foreground)
-        .frame(window_frame)
-        .show(ctx, |ui| {
-            let sel_n = app.session.selection.ids.len();
-
-            // 1. Header bar
+    // 1. Sidebar Header
+    egui::Frame::NONE
+        .inner_margin(Margin { left: 24, right: 20, top: 14, bottom: 8 })
+        .show(ui, |ui| {
             ui.horizontal(|ui| {
                 let dot_color = if app.ui.ai_busy {
                     t.accent
@@ -212,31 +154,23 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                 ui.painter().circle_filled(dot_rect.center(), 4.0, dot_color);
 
                 ui.label(
-                    RichText::new(crate::i18n::tr("✨ AI Studio Assistant"))
-                        .size(13.0)
-                        .strong()
-                        .color(Color32::from_rgb(238, 242, 250)),
+                    RichText::new(crate::i18n::tr("AI Chat"))
+                        .font(t.semibold(15.0))
+                        .color(t.text),
                 );
 
                 if sel_n > 1 {
                     ui.label(
                         RichText::new(format!("Batch ({sel_n})"))
-                            .size(11.0)
+                            .font(t.font(11.5))
                             .color(t.accent),
                     );
                 }
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if ui
-                        .add(egui::Button::new(RichText::new("—").size(12.0).color(t.text_dim)).frame(false))
-                        .on_hover_text(crate::i18n::tr("Minimize to floating pill"))
-                        .clicked()
-                    {
-                        app.ui.ai_chat_open = false;
-                    }
                     if !app.ui.ai_messages.is_empty()
                         && ui
-                            .add(egui::Button::new(RichText::new(crate::i18n::tr("Clear")).size(11.0).color(t.text_dim)).frame(false))
+                            .add(egui::Button::new(RichText::new(crate::i18n::tr("Clear")).font(t.font(11.5)).color(t.text_dim)).frame(false))
                             .on_hover_text(crate::i18n::tr("Clear chat history"))
                             .clicked()
                     {
@@ -245,13 +179,29 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                 });
             });
 
-            ui.add_space(6.0);
+            let active_label = if sel_n > 1 {
+                format!("{sel_n} {}", crate::i18n::tr("photos selected for batch AI editing"))
+            } else if let Some(id) = app.session.active()
+                && let Some(p) = app.session.catalog.photo(id)
+            {
+                format!("{}: {}", crate::i18n::tr("Active"), p.file_name)
+            } else {
+                crate::i18n::tr("Select or import a photo to edit").to_string()
+            };
+            ui.add_space(2.0);
+            ui.label(RichText::new(active_label).font(t.font(11.5)).color(t.text_dim));
+        });
 
-            // 2. Quick-action chips
-            let mut chip_prompt: Option<(String, bool)> = None;
-            let mut heal_blemishes = false;
+    divider(ui);
+
+    // 2. Quick-action chips
+    let mut chip_prompt: Option<(String, bool)> = None;
+    let mut heal_blemishes = false;
+    egui::Frame::NONE
+        .inner_margin(Margin { left: 20, right: 18, top: 10, bottom: 10 })
+        .show(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
-                ui.spacing_mut().item_spacing = vec2(4.0, 4.0);
+                ui.spacing_mut().item_spacing = vec2(5.0, 5.0);
                 for (label, prompt_text) in [
                     ("✨ Auto-Retouch", ""),
                     ("🧍 Body Slim", "Slim body, flatten stomach, cinch waist, slim arms, and lengthen legs"),
@@ -264,11 +214,11 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                 ] {
                     let chip_btn = egui::Button::new(
                         RichText::new(crate::i18n::tr(label))
-                            .size(11.0)
-                            .color(Color32::from_rgb(212, 220, 236)),
+                            .font(t.font(11.5))
+                            .color(t.text_label),
                     )
-                    .fill(Color32::from_rgb(35, 39, 49))
-                    .stroke(Stroke::new(1.0, Color32::from_rgb(56, 63, 78)))
+                    .fill(t.button)
+                    .stroke(Stroke::new(1.0, t.button_border))
                     .corner_radius(CornerRadius::same(12));
                     if ui.add(chip_btn).clicked() {
                         chip_prompt = Some((prompt_text.to_string(), sel_n > 1));
@@ -276,148 +226,162 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                 }
                 let blemish_btn = egui::Button::new(
                     RichText::new(crate::i18n::tr("🩹 Heal Blemishes"))
-                        .size(11.0)
-                        .color(Color32::from_rgb(212, 220, 236)),
+                        .font(t.font(11.5))
+                        .color(t.text_label),
                 )
-                .fill(Color32::from_rgb(35, 39, 49))
-                .stroke(Stroke::new(1.0, Color32::from_rgb(56, 63, 78)))
+                .fill(t.button)
+                .stroke(Stroke::new(1.0, t.button_border))
                 .corner_radius(CornerRadius::same(12));
                 if ui.add(blemish_btn).clicked() {
                     heal_blemishes = true;
                 }
             });
+        });
 
-            if heal_blemishes {
-                let all_sel = sel_n > 1;
-                app.ui.ai_messages.push(AiChatMessage {
-                    role: "user".into(),
-                    text: crate::i18n::tr("🩹 Heal facial blemishes").to_string(),
-                });
-                match app.run("spot.findBlemishes", json!({"allSelected": all_sel})) {
-                    Ok(r) => {
-                        let n = r["added"].as_u64().unwrap_or(0);
-                        let reply = if n == 0 {
-                            crate::i18n::tr("No new facial blemishes detected.").to_string()
-                        } else {
-                            format!("Healed {n} facial blemish{} using PatchMatch.", if n == 1 { "" } else { "es" })
-                        };
-                        app.ui.ai_summary = reply.clone();
-                        app.ui.ai_messages.push(AiChatMessage { role: "assistant".into(), text: reply.clone() });
-                        app.toast(ctx, reply);
-                    }
-                    Err(e) => {
-                        app.ui.ai_messages.push(AiChatMessage { role: "assistant".into(), text: e.to_string() });
-                        app.toast(ctx, e);
-                    }
-                }
+    if heal_blemishes {
+        let all_sel = sel_n > 1;
+        app.ui.ai_messages.push(AiChatMessage {
+            role: "user".into(),
+            text: crate::i18n::tr("🩹 Heal facial blemishes").to_string(),
+        });
+        match app.run("spot.findBlemishes", json!({"allSelected": all_sel})) {
+            Ok(r) => {
+                let n = r["added"].as_u64().unwrap_or(0);
+                let reply = if n == 0 {
+                    crate::i18n::tr("No new facial blemishes detected.").to_string()
+                } else {
+                    format!("Healed {n} facial blemish{} using PatchMatch.", if n == 1 { "" } else { "es" })
+                };
+                app.ui.ai_summary = reply.clone();
+                app.ui.ai_messages.push(AiChatMessage { role: "assistant".into(), text: reply.clone() });
+                app.toast(&ctx, reply);
             }
-
-            if let Some((p, batch)) = chip_prompt {
-                send_message(app, ctx, &p, batch);
+            Err(e) => {
+                app.ui.ai_messages.push(AiChatMessage { role: "assistant".into(), text: e.to_string() });
+                app.toast(&ctx, e);
             }
+        }
+    }
 
-            ui.add_space(6.0);
-            ui.separator();
-            ui.add_space(4.0);
+    if let Some((p, batch)) = chip_prompt {
+        send_message(app, &ctx, &p, batch);
+    }
 
-            // 3. Scrollable chat message list
-            egui::ScrollArea::vertical()
-                .id_salt("ai_studio_chat_scroll")
-                .max_height(156.0)
-                .min_scrolled_height(136.0)
-                .auto_shrink([false, false])
-                .stick_to_bottom(true)
+    divider(ui);
+
+    // 3. Scrollable chat history filling the sidebar above the bottom input bar
+    let footer_h = 62.0;
+    let scroll_h = (ui.available_height() - footer_h).max(120.0);
+    let bubble_max_w = (ui.available_width() - 56.0).max(140.0);
+
+    egui::ScrollArea::vertical()
+        .id_salt("ai_studio_chat_scroll")
+        .max_height(scroll_h)
+        .min_scrolled_height(scroll_h)
+        .auto_shrink([false, false])
+        .stick_to_bottom(true)
+        .show(ui, |ui| {
+            egui::Frame::NONE
+                .inner_margin(Margin { left: 18, right: 18, top: 10, bottom: 10 })
                 .show(ui, |ui| {
                     if app.ui.ai_messages.is_empty() {
                         egui::Frame::NONE
-                            .fill(Color32::from_rgb(30, 34, 44))
+                            .fill(t.button)
+                            .stroke(Stroke::new(1.0, t.button_border))
                             .corner_radius(CornerRadius::same(8))
-                            .inner_margin(Margin::same(10))
+                            .inner_margin(Margin::same(12))
                             .show(ui, |ui| {
                                 ui.label(
                                     RichText::new(crate::i18n::tr(
-                                        "Chat to edit anything in the photo:\n• \"Brighten exposure & lift shadows\"\n• \"Smooth skin, remove shine & fix dark circles\"\n• \"Darken the background & warm skin tone\"\n• \"Crop 4x5 and add a cinematic grade\"",
+                                        "Chat to edit anything in the photo:\n\n• \"Brighten exposure & lift shadows\"\n• \"Smooth skin, remove shine & fix dark circles\"\n• \"Flatten stomach, slim waist & arms\"\n• \"Darken the background & warm skin tone\"\n• \"Crop 4x5 and add a cinematic grade\"",
                                     ))
-                                    .size(11.5)
-                                    .color(Color32::from_rgb(184, 194, 212)),
+                                    .font(t.font(12.0))
+                                    .color(t.text_dim),
                                 );
                             });
                     } else {
                         for msg in &app.ui.ai_messages {
                             let is_user = msg.role == "user";
-                            ui.add_space(3.0);
-                            ui.horizontal(|ui| {
-                                if is_user {
-                                    ui.add_space(28.0);
-                                }
-                                let bg = if is_user {
-                                    Color32::from_rgb(44, 88, 158)
-                                } else {
-                                    Color32::from_rgb(33, 37, 47)
-                                };
-                                let fg = if is_user {
-                                    Color32::from_rgb(245, 248, 255)
-                                } else {
-                                    Color32::from_rgb(214, 224, 242)
-                                };
-                                egui::Frame::NONE
-                                    .fill(bg)
-                                    .corner_radius(CornerRadius::same(8))
-                                    .inner_margin(Margin { left: 9, right: 9, top: 6, bottom: 6 })
-                                    .show(ui, |ui| {
-                                        ui.set_max_width(card_w - 64.0);
-                                        ui.label(RichText::new(&msg.text).size(11.5).color(fg));
-                                    });
-                            });
+                            ui.add_space(6.0);
+                            if is_user {
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
+                                    egui::Frame::NONE
+                                        .fill(t.accent)
+                                        .corner_radius(CornerRadius::same(10))
+                                        .inner_margin(Margin { left: 11, right: 11, top: 7, bottom: 7 })
+                                        .show(ui, |ui| {
+                                            ui.set_max_width(bubble_max_w);
+                                            ui.label(RichText::new(&msg.text).font(t.font(12.0)).color(Color32::WHITE));
+                                        });
+                                });
+                            } else {
+                                ui.horizontal(|ui| {
+                                    egui::Frame::NONE
+                                        .fill(t.button)
+                                        .stroke(Stroke::new(1.0, t.button_border))
+                                        .corner_radius(CornerRadius::same(10))
+                                        .inner_margin(Margin { left: 11, right: 11, top: 7, bottom: 7 })
+                                        .show(ui, |ui| {
+                                            ui.set_max_width(bubble_max_w);
+                                            ui.label(RichText::new(&msg.text).font(t.font(12.0)).color(t.text));
+                                        });
+                                });
+                            }
                         }
                     }
 
                     if app.ui.ai_busy {
-                        ui.add_space(4.0);
+                        ui.add_space(8.0);
                         ui.label(
                             RichText::new(crate::i18n::tr("✨ Refining with AI Vision…"))
-                                .size(11.0)
+                                .font(t.font(11.5))
                                 .italics()
                                 .color(t.accent),
                         );
                     }
                 });
+        });
 
-            ui.add_space(6.0);
+    divider(ui);
 
-            // 4. Chat input row
-            let mut submit = false;
+    // 4. Bottom-pinned chat input bar
+    let mut submit = false;
+    egui::Frame::NONE
+        .inner_margin(Margin { left: 18, right: 18, top: 10, bottom: 10 })
+        .show(ui, |ui| {
             ui.horizontal(|ui| {
-                let input_w = (ui.available_width() - 56.0).max(100.0);
+                let input_w = (ui.available_width() - 60.0).max(90.0);
                 let resp = ui.add(
                     egui::TextEdit::singleline(&mut app.ui.ai_prompt)
                         .id(egui::Id::new("ai_studio_chat_input"))
-                        .hint_text(crate::i18n::tr("Ask AI to change anything in the image…"))
+                        .hint_text(crate::i18n::tr("Ask AI to change anything…"))
                         .desired_width(input_w),
                 );
+                register(&ctx, "field:aiChatInput", resp.rect);
                 if std::mem::take(&mut app.ui.ai_chat_focus) {
                     resp.request_focus();
                 }
                 let enter = resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter));
                 let send_btn = egui::Button::new(
                     RichText::new(crate::i18n::tr("Send"))
-                        .size(11.5)
-                        .strong()
+                        .font(t.semibold(12.0))
                         .color(Color32::WHITE),
                 )
                 .fill(t.accent)
                 .corner_radius(CornerRadius::same(6));
-                if ui.add(send_btn).clicked() || enter {
+                let send_resp = ui.add(send_btn);
+                register(&ctx, "button:aiChatSend", send_resp.rect);
+                if send_resp.clicked() || enter {
                     submit = true;
                 }
             });
-
-            if submit {
-                let msg = std::mem::take(&mut app.ui.ai_prompt);
-                if !msg.trim().is_empty() {
-                    send_message(app, ctx, &msg, sel_n > 1);
-                    app.ui.ai_chat_focus = true;
-                }
-            }
         });
+
+    if submit {
+        let msg = std::mem::take(&mut app.ui.ai_prompt);
+        if !msg.trim().is_empty() {
+            send_message(app, &ctx, &msg, sel_n > 1);
+            app.ui.ai_chat_focus = true;
+        }
+    }
 }

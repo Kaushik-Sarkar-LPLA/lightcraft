@@ -140,6 +140,7 @@ pub const UI_COMMANDS: &[UiCommand] = &[
     ("panel.remove", "Remove", Some("H"), "Window"),
     ("panel.masking", "Masking", Some("M"), "Window"),
     ("panel.redeye", "Red Eye", None, "Window"),
+    ("panel.aiChat", "AI Chat", None, "Window"),
     ("panel.presets", "Presets", Some("Shift+P"), "Window"),
     ("panel.info", "Info", Some("I"), "Window"),
     ("panel.keywords", "Keywords", Some("K"), "Window"),
@@ -1140,6 +1141,13 @@ pub fn run_ui_command(app: &mut LightcraftApp, id: &str, p: &Value) -> Option<Re
         }
         "panel.redeye" => {
             panel(app, &ctx, RightPanel::RedEye, "Red Eye");
+            Ok(Value::Null)
+        }
+        "panel.aiChat" => {
+            panel(app, &ctx, RightPanel::AiChat, "AI Chat");
+            if app.ui.right == RightPanel::AiChat {
+                app.ui.ai_chat_focus = true;
+            }
             Ok(Value::Null)
         }
         "panel.info" => {

@@ -1,4 +1,4 @@
-//! Evoto-style portrait & skin retouching in scene-linear Rec.2020 (via perceptual Oklab):
+//! Portrait, skin & body retouching in scene-linear Rec.2020 (via perceptual Oklab):
 //! - **Skin Retouching**: frequency-separation smoothing (`skin_smooth`, `skin_texture`), chroma
 //!   tone evening (`skin_tone_even`), specular shine compression (`shine_control`), under-eye
 //!   dark-circle & eye-bag reduction (`dark_circles`), and wrinkle/line attenuation (`wrinkle_reduce`).
@@ -915,7 +915,7 @@ fn apply_reshape_warp(img: &mut Rgb32f, r: &Retouch, fz: &FaceZone) {
     });
 }
 
-/// Apply Evoto-style portrait, skin & body retouching in place on scene-linear Rec.2020 `img`.
+/// Apply portrait, skin & body retouching in place on scene-linear Rec.2020 `img`.
 pub fn apply(img: &mut Rgb32f, s: &DevelopSettings, px_per_long: f64) {
     if !s.section_enabled("retouch") || !s.retouch.is_active() || img.data.is_empty() {
         return;
@@ -1419,7 +1419,7 @@ mod tests {
     }
 
     #[test]
-    fn evoto_portrait_features_modify_skin_eyes_teeth_lips_and_reshape() {
+    fn portrait_retouch_features_modify_skin_eyes_teeth_lips_and_reshape() {
         let orig = skin_patch(64, 64);
         let mut img = orig.clone();
         let mut s = DevelopSettings::default();

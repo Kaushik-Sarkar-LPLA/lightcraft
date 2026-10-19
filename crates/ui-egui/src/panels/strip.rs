@@ -49,6 +49,9 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                     }
                 }
                 separator(ui, &t);
+                if icon_button(ui, "aiChat", Icon::AiChat, sz, app.ui.right == RightPanel::AiChat, true, "AI Chat").clicked() {
+                    let _ = app.run("panel.aiChat", json!({}));
+                }
                 if icon_button(ui, "versions", Icon::Versions, sz, app.ui.right == RightPanel::Versions, has_photo, "Versions (Shift+V)").clicked() {
                     let _ = app.run("panel.versions", json!({}));
                 }

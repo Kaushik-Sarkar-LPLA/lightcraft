@@ -31,6 +31,7 @@ pub enum RightPanel {
     Remove,
     Masking,
     RedEye,
+    AiChat,
     Versions,
     Activity,
     Keywords,

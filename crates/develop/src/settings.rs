@@ -1197,7 +1197,7 @@ impl DevelopSettings {
     }
 }
 
-/// Portrait & skin retouching settings (Evoto-style portrait studio):
+/// Portrait, skin & body retouching settings:
 /// - **Skin**: frequency-separation smoothing, pore texture fidelity, chroma tone evening,
 ///   specular shine compression, under-eye dark circles, wrinkle reduction, and blemish sensitivity.
 /// - **Skin Tone & Radiance**: subsurface radiance/brilliance, golden warmth/tan, and redness control.

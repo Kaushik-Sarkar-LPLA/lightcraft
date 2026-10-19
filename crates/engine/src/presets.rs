@@ -462,10 +462,10 @@ pub fn builtin() -> Vec<Preset> {
             "Sepia Tone",
             json!({"treatment": "bw", "grading": {"shadows": {"hue": 32.0, "sat": 22.0, "lum": 0.0}, "highlights": {"hue": 42.0, "sat": 18.0, "lum": 0.0}}, "curve": {"shadows": 10.0}}),
         ),
-        // ---- Evoto Portrait Retouching
+        // ---- Portrait & Body Retouching
         p(
-            "Evoto Portrait",
-            "evoto-natural",
+            "Portrait Retouch",
+            "retouch-natural",
             "Natural Retouch",
             json!({
                 "retouch": {
@@ -485,8 +485,8 @@ pub fn builtin() -> Vec<Preset> {
             }),
         ),
         p(
-            "Evoto Portrait",
-            "evoto-headshot",
+            "Portrait Retouch",
+            "retouch-headshot",
             "Studio Headshot",
             json!({
                 "retouch": {
@@ -512,8 +512,8 @@ pub fn builtin() -> Vec<Preset> {
             }),
         ),
         p(
-            "Evoto Portrait",
-            "evoto-wedding",
+            "Portrait Retouch",
+            "retouch-wedding",
             "Wedding Soft Glow",
             json!({
                 "retouch": {
@@ -540,8 +540,8 @@ pub fn builtin() -> Vec<Preset> {
             }),
         ),
         p(
-            "Evoto Portrait",
-            "evoto-editorial",
+            "Portrait Retouch",
+            "retouch-editorial",
             "Editorial High-End",
             json!({
                 "retouch": {
@@ -571,8 +571,8 @@ pub fn builtin() -> Vec<Preset> {
             }),
         ),
         p(
-            "Evoto Portrait",
-            "evoto-glamour",
+            "Portrait Retouch",
+            "retouch-glamour",
             "Glamour Beauty",
             json!({
                 "retouch": {
@@ -603,8 +603,8 @@ pub fn builtin() -> Vec<Preset> {
             }),
         ),
         p(
-            "Evoto Portrait",
-            "evoto-male",
+            "Portrait Retouch",
+            "retouch-male",
             "Male Portrait",
             json!({
                 "retouch": {
@@ -626,8 +626,8 @@ pub fn builtin() -> Vec<Preset> {
             }),
         ),
         p(
-            "Evoto Portrait",
-            "evoto-body",
+            "Portrait Retouch",
+            "retouch-body",
             "Body Slim & Sculpt",
             json!({
                 "retouch": {
