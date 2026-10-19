@@ -456,7 +456,7 @@ fn remove(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
                             if n == 0 {
                                 crate::i18n::tr("No blemishes found").to_string()
                             } else {
-                                crate::i18n::tr_format!("Healed {n} blemish{}", if n == 1 { "" } else { "es" }, n = n)
+                                format!("Healed {n} blemish{}", if n == 1 { "" } else { "es" })
                             },
                         );
                     }

@@ -450,7 +450,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
                                 if n == 0 {
                                     crate::i18n::tr("No blemishes found").to_string()
                                 } else {
-                                    crate::i18n::tr_format!("Healed {n} blemish{}", if n == 1 { "" } else { "es" }, n = n)
+                                    format!("Healed {n} blemish{}", if n == 1 { "" } else { "es" })
                                 },
                             );
                         }
@@ -466,7 +466,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
                         match app.run("develop.sync", json!({"groups": ["retouch"]})) {
                             Ok(r) => {
                                 let n = r["changed"].as_u64().unwrap_or(0);
-                                app.toast(ui.ctx(), crate::i18n::tr_format!("Synced retouch to {n} photo{}", if n == 1 { "" } else { "s" }, n = n));
+                                app.toast(ui.ctx(), format!("Synced retouch to {n} photo{}", if n == 1 { "" } else { "s" }));
                             }
                             Err(e) => app.toast(ui.ctx(), e),
                         }
@@ -482,12 +482,10 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
                                 let photos = r["photos"].as_u64().unwrap_or(0);
                                 app.toast(
                                     ui.ctx(),
-                                    crate::i18n::tr_format!(
+                                    format!(
                                         "Healed {n} blemish{} across {photos} photo{}",
                                         if n == 1 { "" } else { "es" },
-                                        if photos == 1 { "" } else { "s" },
-                                        n = n,
-                                        photos = photos
+                                        if photos == 1 { "" } else { "s" }
                                     ),
                                 );
                             }
