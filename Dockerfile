@@ -1,13 +1,13 @@
 FROM alpine:3.20 AS fetcher
 RUN apk add --no-cache curl unzip gzip
 WORKDIR /app
-COPY apps/lightcraft-web/index.html /tmp/index.html
+COPY apps/lightcraft-web/prebuilt/ /tmp/prebuilt/
 RUN curl -fsSL -o lightcraft-web.zip https://github.com/storytold/lightcraft/releases/download/v0.9.1/lightcraft-web-0.9.1.zip && \
     unzip lightcraft-web.zip && \
     mv lightcraft-web-0.9.1 dist && \
-    cp /tmp/index.html dist/index.html && \
-    gzip -9 -c dist/index.html > dist/index.html.gz && \
-    rm -f dist/index.html.br
+    rm -f dist/index.html.br dist/worker.js.br dist/lightcraft_web.js.br dist/lightcraft_web_bg.wasm.br && \
+    cp -f /tmp/prebuilt/* dist/ && \
+    gzip -dk -f dist/lightcraft_web_bg.wasm.gz
 
 FROM nginx:alpine
 COPY --from=fetcher /app/dist/ /usr/share/nginx/html/
