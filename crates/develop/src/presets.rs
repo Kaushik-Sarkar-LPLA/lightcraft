@@ -30,6 +30,7 @@ pub enum SettingsGroup {
     Vignette,
     Grain,
     Detail,
+    Retouch,
     Optics,
     Geometry,
     Crop,
@@ -41,7 +42,7 @@ pub enum SettingsGroup {
 }
 
 impl SettingsGroup {
-    pub const ALL: [SettingsGroup; 20] = [
+    pub const ALL: [SettingsGroup; 21] = [
         SettingsGroup::Profile,
         SettingsGroup::Treatment,
         SettingsGroup::WhiteBalance,
@@ -54,6 +55,7 @@ impl SettingsGroup {
         SettingsGroup::Vignette,
         SettingsGroup::Grain,
         SettingsGroup::Detail,
+        SettingsGroup::Retouch,
         SettingsGroup::Optics,
         SettingsGroup::Geometry,
         SettingsGroup::Crop,
@@ -86,6 +88,7 @@ impl SettingsGroup {
             SettingsGroup::Vignette => "Vignette",
             SettingsGroup::Grain => "Grain",
             SettingsGroup::Detail => "Detail",
+            SettingsGroup::Retouch => "Retouch",
             SettingsGroup::Optics => "Optics",
             SettingsGroup::Geometry => "Geometry",
             SettingsGroup::Crop => "Crop",
@@ -112,6 +115,7 @@ impl SettingsGroup {
             SettingsGroup::Vignette => &["vignette"],
             SettingsGroup::Grain => &["grain"],
             SettingsGroup::Detail => &["detail", "enhance"],
+            SettingsGroup::Retouch => &["retouch"],
             SettingsGroup::Optics => &["optics"],
             SettingsGroup::Geometry => &["geometry"],
             SettingsGroup::Crop => &["crop", "orientation"],

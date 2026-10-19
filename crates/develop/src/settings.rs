@@ -1197,8 +1197,15 @@ impl DevelopSettings {
     }
 }
 
-/// Portrait & skin retouching settings: frequency-separation skin smoothing, chroma tone evening,
-/// specular shine compression, and automatic blemish detection sensitivity.
+/// Portrait & skin retouching settings (Evoto-style portrait studio):
+/// - **Skin**: frequency-separation smoothing, pore texture fidelity, chroma tone evening,
+///   specular shine compression, under-eye dark circles, wrinkle reduction, and blemish sensitivity.
+/// - **Skin Tone & Radiance**: subsurface radiance/brilliance, golden warmth/tan, and redness control.
+/// - **Eyes & Brows**: iris brightening, sclera whitening/red-vein removal, eye clarity, and eyebrow definition.
+/// - **Mouth, Teeth & Lips**: teeth whitening & yellow-cast removal, lip tint/saturation, and lip gloss/moisture.
+/// - **Face Sculpt & Reshaping**: 3D dodge & burn facial contouring plus 2D mesh-warp reshaping
+///   (face/jawline slimming, eye enlargement, nose slimming, chin length, smile lift).
+/// - **Hair & Flyaways**: hair shineband luster and stray-hair/flyaway attenuation.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Retouch {
@@ -1210,6 +1217,46 @@ pub struct Retouch {
     pub skin_tone_even: f64,
     /// Facial specular highlight / shine compression (0..100, default 0).
     pub shine_control: f64,
+    /// Under-eye dark circle and eye-bag shadow reduction (0..100, default 0).
+    pub dark_circles: f64,
+    /// Forehead, nasolabial fold, and crow's-feet wrinkle/line reduction (0..100, default 0).
+    pub wrinkle_reduce: f64,
+    /// Skin brilliance / subsurface radiance lift (-100..100, default 0).
+    pub skin_radiance: f64,
+    /// Unified skin tone golden warmth / tan shift (-100..100, default 0).
+    pub skin_warmth: f64,
+    /// Skin redness / rosacea / pinkness control (-100..100, default 0).
+    pub skin_redness: f64,
+    /// Iris brightening & catchlight boost (0..100, default 0).
+    pub eye_brighten: f64,
+    /// Sclera whitening & red-vein desaturation (0..100, default 0).
+    pub eye_whiten: f64,
+    /// Iris & eyelash micro-contrast clarity (0..100, default 0).
+    pub eye_clarity: f64,
+    /// Eyebrow darkening, fullness & definition (-100..100, default 0).
+    pub eyebrow_enhance: f64,
+    /// Teeth whitening & yellow-cast removal (0..100, default 0).
+    pub teeth_whiten: f64,
+    /// Lip tint richness & saturation enhancement (-100..100, default 0).
+    pub lip_enhance: f64,
+    /// Lip moisture / gloss sheen & 3D fullness contrast (0..100, default 0).
+    pub lip_moisture: f64,
+    /// 3D facial dodge & burn contouring / sculpting (0..100, default 0).
+    pub face_contour: f64,
+    /// Face & jawline slimming mesh warp (-100..100, default 0).
+    pub face_slim: f64,
+    /// Eye size enlargement mesh warp (-100..100, default 0).
+    pub eye_enlarge: f64,
+    /// Nose bridge & alar width slimming mesh warp (-100..100, default 0).
+    pub nose_slim: f64,
+    /// Chin & lower-face vertical length refinement warp (-100..100, default 0).
+    pub chin_length: f64,
+    /// Mouth corner / smile lift warp (-100..100, default 0).
+    pub smile_lift: f64,
+    /// Hair shineband luster & strand clarity (0..100, default 0).
+    pub hair_luster: f64,
+    /// Stray hair & flyaway reduction (0..100, default 0).
+    pub stray_hair: f64,
     /// Sensitivity for automatic facial blemish detection (0..100, default 50).
     pub blemish_sensitivity: f64,
 }
@@ -1221,6 +1268,26 @@ impl Default for Retouch {
             skin_texture: 50.0,
             skin_tone_even: 0.0,
             shine_control: 0.0,
+            dark_circles: 0.0,
+            wrinkle_reduce: 0.0,
+            skin_radiance: 0.0,
+            skin_warmth: 0.0,
+            skin_redness: 0.0,
+            eye_brighten: 0.0,
+            eye_whiten: 0.0,
+            eye_clarity: 0.0,
+            eyebrow_enhance: 0.0,
+            teeth_whiten: 0.0,
+            lip_enhance: 0.0,
+            lip_moisture: 0.0,
+            face_contour: 0.0,
+            face_slim: 0.0,
+            eye_enlarge: 0.0,
+            nose_slim: 0.0,
+            chin_length: 0.0,
+            smile_lift: 0.0,
+            hair_luster: 0.0,
+            stray_hair: 0.0,
             blemish_sensitivity: 50.0,
         }
     }
@@ -1232,11 +1299,67 @@ impl Retouch {
         *self == Retouch::default()
     }
 
-    /// Whether any pixel-affecting retouch slider is active (`> 0`).
+    /// Whether any 2D facial reshaping / liquify slider is active (`!= 0`).
+    pub fn has_reshape(&self) -> bool {
+        let nz = |v: f64| v.is_finite() && v.abs() > 1e-4;
+        nz(self.face_slim) || nz(self.eye_enlarge) || nz(self.nose_slim) || nz(self.chin_length) || nz(self.smile_lift)
+    }
+
+    /// Whether any pixel-affecting retouch slider is active.
     pub fn is_active(&self) -> bool {
-        (self.skin_smooth.is_finite() && self.skin_smooth > 0.0)
-            || (self.skin_tone_even.is_finite() && self.skin_tone_even > 0.0)
-            || (self.shine_control.is_finite() && self.shine_control > 0.0)
+        let pos = |v: f64| v.is_finite() && v > 0.0;
+        let nz = |v: f64| v.is_finite() && v.abs() > 1e-4;
+        pos(self.skin_smooth)
+            || pos(self.skin_tone_even)
+            || pos(self.shine_control)
+            || pos(self.dark_circles)
+            || pos(self.wrinkle_reduce)
+            || nz(self.skin_radiance)
+            || nz(self.skin_warmth)
+            || nz(self.skin_redness)
+            || pos(self.eye_brighten)
+            || pos(self.eye_whiten)
+            || pos(self.eye_clarity)
+            || nz(self.eyebrow_enhance)
+            || pos(self.teeth_whiten)
+            || nz(self.lip_enhance)
+            || pos(self.lip_moisture)
+            || pos(self.face_contour)
+            || self.has_reshape()
+            || pos(self.hair_luster)
+            || pos(self.stray_hair)
+    }
+
+    /// Bit pattern of all pixel-affecting retouch parameters for stage cache keying.
+    pub fn cache_bits(&self) -> [u64; 24] {
+        [
+            self.skin_smooth,
+            self.skin_texture,
+            self.skin_tone_even,
+            self.shine_control,
+            self.dark_circles,
+            self.wrinkle_reduce,
+            self.skin_radiance,
+            self.skin_warmth,
+            self.skin_redness,
+            self.eye_brighten,
+            self.eye_whiten,
+            self.eye_clarity,
+            self.eyebrow_enhance,
+            self.teeth_whiten,
+            self.lip_enhance,
+            self.lip_moisture,
+            self.face_contour,
+            self.face_slim,
+            self.eye_enlarge,
+            self.nose_slim,
+            self.chin_length,
+            self.smile_lift,
+            self.hair_luster,
+            self.stray_hair,
+        ]
+        .map(f64::to_bits)
     }
 }
+
 

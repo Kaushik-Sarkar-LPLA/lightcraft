@@ -364,13 +364,77 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
         ui.add_space(8.0);
     });
     section(app, ui, &d, "retouch", "Retouch", |app, ui, d| {
-        sub_title(ui, crate::i18n::tr("Frequency Separation Skin"));
+        sub_title(ui, crate::i18n::tr("Evoto Portrait Presets"));
+        egui::Frame::NONE.inner_margin(egui::Margin { left: 24, right: 22, top: 2, bottom: 4 }).show(ui, |ui| {
+            ui.horizontal_wrapped(|ui| {
+                ui.spacing_mut().item_spacing.y = 4.0;
+                for (btn_id, preset_id, label, tip) in [
+                    ("evotoPresetNatural", "lc.evoto-natural", "Natural", "Subtle skin smoothing, dark-circle lift, and eye/teeth pop"),
+                    ("evotoPresetHeadshot", "lc.evoto-headshot", "Headshot", "Clean studio headshot retouching with 3D face sculpt and shine control"),
+                    ("evotoPresetWedding", "lc.evoto-wedding", "Wedding", "Soft luminous bridal glow, warm skin tone, and gentle smile lift"),
+                    ("evotoPresetEditorial", "lc.evoto-editorial", "Editorial", "High-end frequency separation retaining pore texture with 3D contour"),
+                    ("evotoPresetGlamour", "lc.evoto-glamour", "Glamour", "Full beauty retouch, radiant skin, glossy lips, and subtle facial reshape"),
+                    ("evotoPresetMale", "lc.evoto-male", "Male", "High-texture skin cleanup, shine & redness reduction, and crisp eyes"),
+                ] {
+                    if text_button(ui, btn_id, crate::i18n::tr(label), false).on_hover_text(crate::i18n::tr(tip)).clicked()
+                        && let Err(e) = app.run("preset.apply", json!({"id": preset_id}))
+                    {
+                        app.toast(ui.ctx(), e);
+                    }
+                }
+                if d.retouch.is_active()
+                    && text_button(ui, "evotoPresetReset", crate::i18n::tr("Reset"), false)
+                        .on_hover_text(crate::i18n::tr("Reset all Retouch sliders to zero"))
+                        .clicked()
+                    && let Err(e) = app.run(
+                        "develop.merge",
+                        json!({"settings": {"retouch": lightcraft_develop::Retouch::default()}, "label": "Reset Retouch"}),
+                    )
+                {
+                    app.toast(ui.ctx(), e);
+                }
+            });
+        });
+
+        sub_title(ui, crate::i18n::tr("Skin Retouching (Frequency Separation)"));
         control(app, ui, d, "retouch.skinSmooth", true);
         control(app, ui, d, "retouch.skinTexture", d.retouch.skin_smooth > 0.0);
         control(app, ui, d, "retouch.skinToneEven", true);
         control(app, ui, d, "retouch.shineControl", true);
-        sub_title(ui, crate::i18n::tr("Blemish & Portrait Tools"));
+        control(app, ui, d, "retouch.darkCircles", true);
+        control(app, ui, d, "retouch.wrinkleReduce", true);
+
+        sub_title(ui, crate::i18n::tr("Skin Tone & Radiance"));
+        control(app, ui, d, "retouch.skinRadiance", true);
+        control(app, ui, d, "retouch.skinWarmth", true);
+        control(app, ui, d, "retouch.skinRedness", true);
+
+        sub_title(ui, crate::i18n::tr("Eyes & Eyebrows"));
+        control(app, ui, d, "retouch.eyeBrighten", true);
+        control(app, ui, d, "retouch.eyeWhiten", true);
+        control(app, ui, d, "retouch.eyeClarity", true);
+        control(app, ui, d, "retouch.eyebrowEnhance", true);
+
+        sub_title(ui, crate::i18n::tr("Mouth, Teeth & Lips"));
+        control(app, ui, d, "retouch.teethWhiten", true);
+        control(app, ui, d, "retouch.lipEnhance", true);
+        control(app, ui, d, "retouch.lipMoisture", true);
+
+        sub_title(ui, crate::i18n::tr("Face Sculpt & 2D Reshape"));
+        control(app, ui, d, "retouch.faceContour", true);
+        control(app, ui, d, "retouch.faceSlim", true);
+        control(app, ui, d, "retouch.eyeEnlarge", true);
+        control(app, ui, d, "retouch.noseSlim", true);
+        control(app, ui, d, "retouch.chinLength", true);
+        control(app, ui, d, "retouch.smileLift", true);
+
+        sub_title(ui, crate::i18n::tr("Hair & Flyaways"));
+        control(app, ui, d, "retouch.hairLuster", true);
+        control(app, ui, d, "retouch.strayHair", true);
+
+        sub_title(ui, crate::i18n::tr("Blemish & Batch Studio"));
         control(app, ui, d, "retouch.blemishSensitivity", true);
+        let sel_count = app.session.selection.ids.len();
         egui::Frame::NONE.inner_margin(egui::Margin { left: 24, right: 22, top: 4, bottom: 4 }).show(ui, |ui| {
             ui.horizontal_wrapped(|ui| {
                 ui.spacing_mut().item_spacing.y = 4.0;
@@ -391,6 +455,44 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
                             );
                         }
                         Err(e) => app.toast(ui.ctx(), e),
+                    }
+                }
+                if sel_count > 1 {
+                    let sync_label = format!("{} ({sel_count})", crate::i18n::tr("Sync Retouch"));
+                    if text_button(ui, "retouchSyncBatch", sync_label, false)
+                        .on_hover_text(crate::i18n::tr("Sync all Retouch sliders to all selected photos"))
+                        .clicked()
+                    {
+                        match app.run("develop.sync", json!({"groups": ["retouch"]})) {
+                            Ok(r) => {
+                                let n = r["changed"].as_u64().unwrap_or(0);
+                                app.toast(ui.ctx(), crate::i18n::tr_format!("Synced retouch to {n} photo{}", if n == 1 { "" } else { "s" }, n = n));
+                            }
+                            Err(e) => app.toast(ui.ctx(), e),
+                        }
+                    }
+                    let batch_heal_label = format!("{} ({sel_count})", crate::i18n::tr("Batch Heal Blemishes"));
+                    if text_button(ui, "retouchBatchBlemishes", batch_heal_label, false)
+                        .on_hover_text(crate::i18n::tr("Run automatic facial blemish detection and healing across all selected photos"))
+                        .clicked()
+                    {
+                        match app.run("spot.findBlemishes", json!({"sensitivity": d.retouch.blemish_sensitivity, "allSelected": true})) {
+                            Ok(r) => {
+                                let n = r["added"].as_u64().unwrap_or(0);
+                                let photos = r["photos"].as_u64().unwrap_or(0);
+                                app.toast(
+                                    ui.ctx(),
+                                    crate::i18n::tr_format!(
+                                        "Healed {n} blemish{} across {photos} photo{}",
+                                        if n == 1 { "" } else { "es" },
+                                        if photos == 1 { "" } else { "s" },
+                                        n = n,
+                                        photos = photos
+                                    ),
+                                );
+                            }
+                            Err(e) => app.toast(ui.ctx(), e),
+                        }
                     }
                 }
                 if text_button(ui, "retouchPeopleMask", crate::i18n::tr("Portrait Mask"), false)

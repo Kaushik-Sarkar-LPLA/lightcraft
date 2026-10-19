@@ -296,6 +296,26 @@ controls! {
     "retouch.skinTexture" => retouch.skin_texture, "Skin Texture", Retouch, 0, 100, 50, 1, 0, Plain;
     "retouch.skinToneEven" => retouch.skin_tone_even, "Skin Tone Evening", Retouch, 0, 100, 0, 1, 0, Plain;
     "retouch.shineControl" => retouch.shine_control, "Shine Control", Retouch, 0, 100, 0, 1, 0, Plain;
+    "retouch.darkCircles" => retouch.dark_circles, "Dark Circles", Retouch, 0, 100, 0, 1, 0, Plain;
+    "retouch.wrinkleReduce" => retouch.wrinkle_reduce, "Wrinkle Reduction", Retouch, 0, 100, 0, 1, 0, Plain;
+    "retouch.skinRadiance" => retouch.skin_radiance, "Skin Radiance", Retouch, -100, 100, 0, 1, 0, Centered;
+    "retouch.skinWarmth" => retouch.skin_warmth, "Skin Warmth", Retouch, -100, 100, 0, 1, 0, Gradient { from: "#5a88c8", to: "#d89040" };
+    "retouch.skinRedness" => retouch.skin_redness, "Skin Redness", Retouch, -100, 100, 0, 1, 0, Gradient { from: "#bfa088", to: "#e05555" };
+    "retouch.eyeBrighten" => retouch.eye_brighten, "Eye Brightening", Retouch, 0, 100, 0, 1, 0, Plain;
+    "retouch.eyeWhiten" => retouch.eye_whiten, "Sclera Whitening", Retouch, 0, 100, 0, 1, 0, Plain;
+    "retouch.eyeClarity" => retouch.eye_clarity, "Eye Clarity", Retouch, 0, 100, 0, 1, 0, Plain;
+    "retouch.eyebrowEnhance" => retouch.eyebrow_enhance, "Eyebrow Definition", Retouch, -100, 100, 0, 1, 0, Centered;
+    "retouch.teethWhiten" => retouch.teeth_whiten, "Teeth Whitening", Retouch, 0, 100, 0, 1, 0, Plain;
+    "retouch.lipEnhance" => retouch.lip_enhance, "Lip Tint & Richness", Retouch, -100, 100, 0, 1, 0, Gradient { from: "#8a7575", to: "#d83b60" };
+    "retouch.lipMoisture" => retouch.lip_moisture, "Lip Gloss & Fullness", Retouch, 0, 100, 0, 1, 0, Plain;
+    "retouch.faceContour" => retouch.face_contour, "3D Face Sculpt", Retouch, 0, 100, 0, 1, 0, Plain;
+    "retouch.faceSlim" => retouch.face_slim, "Face Slimming", Retouch, -100, 100, 0, 1, 0, Centered;
+    "retouch.eyeEnlarge" => retouch.eye_enlarge, "Eye Size", Retouch, -100, 100, 0, 1, 0, Centered;
+    "retouch.noseSlim" => retouch.nose_slim, "Nose Slimming", Retouch, -100, 100, 0, 1, 0, Centered;
+    "retouch.chinLength" => retouch.chin_length, "Chin Length", Retouch, -100, 100, 0, 1, 0, Centered;
+    "retouch.smileLift" => retouch.smile_lift, "Smile Lift", Retouch, -100, 100, 0, 1, 0, Centered;
+    "retouch.hairLuster" => retouch.hair_luster, "Hair Luster", Retouch, 0, 100, 0, 1, 0, Plain;
+    "retouch.strayHair" => retouch.stray_hair, "Stray Hair Reduction", Retouch, 0, 100, 0, 1, 0, Plain;
     "retouch.blemishSensitivity" => retouch.blemish_sensitivity, "Blemish Sensitivity", Retouch, 0, 100, 50, 1, 0, Plain;
 }
 

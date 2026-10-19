@@ -462,6 +462,169 @@ pub fn builtin() -> Vec<Preset> {
             "Sepia Tone",
             json!({"treatment": "bw", "grading": {"shadows": {"hue": 32.0, "sat": 22.0, "lum": 0.0}, "highlights": {"hue": 42.0, "sat": 18.0, "lum": 0.0}}, "curve": {"shadows": 10.0}}),
         ),
+        // ---- Evoto Portrait Retouching
+        p(
+            "Evoto Portrait",
+            "evoto-natural",
+            "Natural Retouch",
+            json!({
+                "retouch": {
+                    "skin_smooth": 35.0,
+                    "skin_texture": 58.0,
+                    "skin_tone_even": 30.0,
+                    "shine_control": 25.0,
+                    "dark_circles": 35.0,
+                    "wrinkle_reduce": 20.0,
+                    "skin_radiance": 12.0,
+                    "eye_brighten": 25.0,
+                    "eye_whiten": 20.0,
+                    "eye_clarity": 20.0,
+                    "teeth_whiten": 25.0,
+                    "lip_enhance": 12.0
+                }
+            }),
+        ),
+        p(
+            "Evoto Portrait",
+            "evoto-headshot",
+            "Studio Headshot",
+            json!({
+                "retouch": {
+                    "skin_smooth": 52.0,
+                    "skin_texture": 55.0,
+                    "skin_tone_even": 48.0,
+                    "shine_control": 45.0,
+                    "dark_circles": 55.0,
+                    "wrinkle_reduce": 35.0,
+                    "skin_radiance": 18.0,
+                    "skin_redness": -18.0,
+                    "eye_brighten": 40.0,
+                    "eye_whiten": 35.0,
+                    "eye_clarity": 38.0,
+                    "eyebrow_enhance": 20.0,
+                    "teeth_whiten": 45.0,
+                    "lip_enhance": 18.0,
+                    "lip_moisture": 22.0,
+                    "face_contour": 32.0,
+                    "hair_luster": 28.0,
+                    "stray_hair": 35.0
+                }
+            }),
+        ),
+        p(
+            "Evoto Portrait",
+            "evoto-wedding",
+            "Wedding Soft Glow",
+            json!({
+                "retouch": {
+                    "skin_smooth": 58.0,
+                    "skin_texture": 50.0,
+                    "skin_tone_even": 52.0,
+                    "shine_control": 40.0,
+                    "dark_circles": 50.0,
+                    "wrinkle_reduce": 40.0,
+                    "skin_radiance": 32.0,
+                    "skin_warmth": 18.0,
+                    "skin_redness": -15.0,
+                    "eye_brighten": 35.0,
+                    "eye_whiten": 30.0,
+                    "eye_clarity": 25.0,
+                    "teeth_whiten": 40.0,
+                    "lip_enhance": 24.0,
+                    "lip_moisture": 30.0,
+                    "face_contour": 25.0,
+                    "smile_lift": 12.0,
+                    "hair_luster": 35.0,
+                    "stray_hair": 30.0
+                }
+            }),
+        ),
+        p(
+            "Evoto Portrait",
+            "evoto-editorial",
+            "Editorial High-End",
+            json!({
+                "retouch": {
+                    "skin_smooth": 65.0,
+                    "skin_texture": 68.0,
+                    "skin_tone_even": 65.0,
+                    "shine_control": 35.0,
+                    "dark_circles": 60.0,
+                    "wrinkle_reduce": 45.0,
+                    "skin_radiance": 22.0,
+                    "skin_warmth": 12.0,
+                    "skin_redness": -22.0,
+                    "eye_brighten": 48.0,
+                    "eye_whiten": 40.0,
+                    "eye_clarity": 50.0,
+                    "eyebrow_enhance": 30.0,
+                    "teeth_whiten": 50.0,
+                    "lip_enhance": 32.0,
+                    "lip_moisture": 42.0,
+                    "face_contour": 55.0,
+                    "face_slim": 18.0,
+                    "eye_enlarge": 12.0,
+                    "nose_slim": 12.0,
+                    "hair_luster": 45.0,
+                    "stray_hair": 45.0
+                }
+            }),
+        ),
+        p(
+            "Evoto Portrait",
+            "evoto-glamour",
+            "Glamour Beauty",
+            json!({
+                "retouch": {
+                    "skin_smooth": 72.0,
+                    "skin_texture": 48.0,
+                    "skin_tone_even": 70.0,
+                    "shine_control": 50.0,
+                    "dark_circles": 68.0,
+                    "wrinkle_reduce": 55.0,
+                    "skin_radiance": 38.0,
+                    "skin_warmth": 24.0,
+                    "skin_redness": -20.0,
+                    "eye_brighten": 52.0,
+                    "eye_whiten": 45.0,
+                    "eye_clarity": 45.0,
+                    "eyebrow_enhance": 28.0,
+                    "teeth_whiten": 55.0,
+                    "lip_enhance": 40.0,
+                    "lip_moisture": 50.0,
+                    "face_contour": 48.0,
+                    "face_slim": 24.0,
+                    "eye_enlarge": 18.0,
+                    "nose_slim": 16.0,
+                    "smile_lift": 15.0,
+                    "hair_luster": 50.0,
+                    "stray_hair": 50.0
+                }
+            }),
+        ),
+        p(
+            "Evoto Portrait",
+            "evoto-male",
+            "Male Portrait",
+            json!({
+                "retouch": {
+                    "skin_smooth": 28.0,
+                    "skin_texture": 70.0,
+                    "skin_tone_even": 35.0,
+                    "shine_control": 55.0,
+                    "dark_circles": 45.0,
+                    "wrinkle_reduce": 22.0,
+                    "skin_redness": -24.0,
+                    "eye_brighten": 30.0,
+                    "eye_whiten": 28.0,
+                    "eye_clarity": 42.0,
+                    "eyebrow_enhance": 18.0,
+                    "teeth_whiten": 35.0,
+                    "face_contour": 38.0,
+                    "stray_hair": 25.0
+                }
+            }),
+        ),
     ]
 }
 

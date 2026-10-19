@@ -449,7 +449,7 @@ pub fn plan<'a>(src: &Rgb32f, info: &SourceInfo, s: &'a DevelopSettings, req: &R
         format!("{:?}", s.optics),
         // portrait & skin retouching runs in this stage
         s.section_enabled("retouch"),
-        [s.retouch.skin_smooth, s.retouch.skin_texture, s.retouch.skin_tone_even, s.retouch.shine_control].map(f64::to_bits),
+        s.retouch.cache_bits(),
         // and the local tone mapping
         local_tone::enabled(info, s),
         src_long,
