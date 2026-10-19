@@ -904,7 +904,7 @@ pub fn specs() -> Vec<CommandSpec> {
             "Analyze Portrait for AI Retouch",
             [],
             None,
-            "{id?} — run YuNet ONNX neural 5-landmark detection and Oklab frequency-separation skin/feature analysis on the photo → {id, fileName, analysis, current}",
+            "{id?} — run YuNet ONNX neural 5-landmark detection and Oklab frequency-separation skin/feature analysis on the photo → {id, fileName, imageDataUrl, analysis, current}",
             has_active,
             |s, p| {
                 let c = "retouch.analyze";
@@ -915,9 +915,22 @@ pub fn specs() -> Vec<CommandSpec> {
                     .or_else(|| s.active())
                     .ok_or_else(|| bad(c, "no active photo"))?;
                 let base_settings = lightcraft_develop::DevelopSettings::default();
-                let job = s.preview_job(id, 512, 512, false, &base_settings).ok_or_else(|| bad(c, "could not render preview"))?;
+                let job = s.preview_job(id, 384, 384, false, &base_settings).ok_or_else(|| bad(c, "could not render preview"))?;
                 let rendered = job.run().rendered.map_err(|e| bad(c, e))?;
                 let rgba = rendered.image;
+                let enc_img = lightcraft_codecs::EncodeImage::rgba8(&rgba);
+                let jpeg_bytes = lightcraft_codecs::encode_jpeg(
+                    &enc_img,
+                    78,
+                    lightcraft_codecs::ChromaSubsampling::S420,
+                    &lightcraft_codecs::EncodeMeta::default(),
+                )
+                .unwrap_or_default();
+                let image_data_url = if jpeg_bytes.is_empty() {
+                    String::new()
+                } else {
+                    format!("data:image/jpeg;base64,{}", encode_base64(&jpeg_bytes))
+                };
                 let mut lin = lightcraft_raster::Rgb32f::new(rgba.width, rgba.height);
                 for (dst, src) in lin.data.iter_mut().zip(rgba.data.iter()) {
                     let r = (f32::from(src[0]) / 255.0).powf(2.2);
@@ -931,6 +944,7 @@ pub fn specs() -> Vec<CommandSpec> {
                 Ok(json!({
                     "id": id.0,
                     "fileName": file_name,
+                    "imageDataUrl": image_data_url,
                     "analysis": analysis,
                     "current": {
                         "retouch": cur.retouch,
@@ -1424,4 +1438,28 @@ fn pressure_list(v: Option<&Value>, points: usize) -> Result<Vec<f32>> {
         .map(|q| q.as_f64().filter(|f| f.is_finite()).map(|f| f.clamp(0.0, 1.0) as f32))
         .collect::<Option<Vec<f32>>>()
         .ok_or_else(|| bad("mask.brushStroke", "pressure must be a list of numbers 0..1"))
+}
+
+fn encode_base64(bytes: &[u8]) -> String {
+    const TABLE: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let b0 = chunk[0] as u32;
+        let b1 = chunk.get(1).copied().unwrap_or(0) as u32;
+        let b2 = chunk.get(2).copied().unwrap_or(0) as u32;
+        let n = (b0 << 16) | (b1 << 8) | b2;
+        out.push(TABLE[((n >> 18) & 0x3F) as usize] as char);
+        out.push(TABLE[((n >> 12) & 0x3F) as usize] as char);
+        if chunk.len() > 1 {
+            out.push(TABLE[((n >> 6) & 0x3F) as usize] as char);
+        } else {
+            out.push('=');
+        }
+        if chunk.len() > 2 {
+            out.push(TABLE[(n & 0x3F) as usize] as char);
+        } else {
+            out.push('=');
+        }
+    }
+    out
 }

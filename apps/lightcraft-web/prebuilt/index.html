@@ -78,15 +78,25 @@
             JSON.stringify(req.telemetry?.analysis || req.telemetry || {}) +
             "\n\nUser Instruction: " + userGoal +
             "\n\nRespond ONLY with the JSON object.";
+          const imageDataUrl = (req.telemetry && typeof req.telemetry.imageDataUrl === "string")
+            ? req.telemetry.imageDataUrl
+            : "";
+          const userContent = imageDataUrl
+            ? [
+                { type: "text", text: userMsg },
+                { type: "image_url", image_url: { url: imageDataUrl } }
+              ]
+            : userMsg;
           const resp = await fetch(base + "/chat/completions", {
             method: "POST",
             headers,
             body: JSON.stringify({
               model,
               stream: false,
+              response_format: { type: "json_object" },
               messages: [
                 { role: "system", content: sysPrompt },
-                { role: "user", content: userMsg }
+                { role: "user", content: userContent }
               ]
             })
           });
