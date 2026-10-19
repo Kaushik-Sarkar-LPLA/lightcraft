@@ -1549,6 +1549,76 @@ pub fn specs() -> Vec<CommandSpec> {
                                 dd.treatment = lightcraft_develop::Treatment::Color;
                             }
                         }
+
+                        if actions.iter().any(|a| a == "clearmasks" || a == "clear_masks") {
+                            dd.masks.clear();
+                        }
+                        if actions.iter().any(|a| a == "clearspots" || a == "clear_spots") {
+                            dd.spots.clear();
+                        }
+
+                        if let Some(mask_arr) = ai.get("masks").and_then(Value::as_array) {
+                            for m_val in mask_arr.iter().take(6) {
+                                let kind = m_val.get("kind").and_then(Value::as_str).unwrap_or("background").trim().to_ascii_lowercase();
+                                let Ok(shape) = shape_from(&kind, m_val, "retouch.aiApply") else { continue };
+                                let default_name = match kind.as_str() {
+                                    "background" => "AI Background",
+                                    "sky" => "AI Sky",
+                                    "subject" => "AI Subject",
+                                    "people" => "AI Portrait Mask",
+                                    "radial" => "AI Radial Mask",
+                                    "linear" => "AI Gradient Mask",
+                                    _ => "AI Mask",
+                                };
+                                let name = m_val
+                                    .get("name")
+                                    .and_then(Value::as_str)
+                                    .map(str::trim)
+                                    .filter(|n| !n.is_empty())
+                                    .unwrap_or(default_name)
+                                    .to_string();
+                                let invert = m_val.get("invert").and_then(Value::as_bool).unwrap_or(false);
+                                let adj_src = m_val.get("adjust").unwrap_or(m_val);
+                                let mut adj = LocalAdjustments::default();
+                                if let Some(v) = num(adj_src, "exposure", "exposure") { adj.exposure = v; }
+                                if let Some(v) = num(adj_src, "contrast", "contrast") { adj.contrast = v; }
+                                if let Some(v) = num(adj_src, "highlights", "highlights") { adj.highlights = v; }
+                                if let Some(v) = num(adj_src, "shadows", "shadows") { adj.shadows = v; }
+                                if let Some(v) = num(adj_src, "whites", "whites") { adj.whites = v; }
+                                if let Some(v) = num(adj_src, "blacks", "blacks") { adj.blacks = v; }
+                                if let Some(v) = num(adj_src, "temp", "temperature") { adj.temp = v; }
+                                if let Some(v) = num(adj_src, "tint", "tint") { adj.tint = v; }
+                                if let Some(v) = num(adj_src, "texture", "texture") { adj.texture = v; }
+                                if let Some(v) = num(adj_src, "clarity", "clarity") { adj.clarity = v; }
+                                if let Some(v) = num(adj_src, "dehaze", "dehaze") { adj.dehaze = v; }
+                                if let Some(v) = num(adj_src, "saturation", "sat") { adj.saturation = v; }
+                                if let Some(v) = num(adj_src, "sharpness", "sharp") { adj.sharpness = v; }
+                                if let Some(v) = num(adj_src, "noise", "denoise") { adj.noise = v; }
+                                let adj = clamp_local(adj);
+                                if let Some(existing) = dd.masks.iter_mut().find(|m| m.name.eq_ignore_ascii_case(&name)) {
+                                    existing.adjust = adj;
+                                    existing.invert = invert;
+                                    existing.visible = true;
+                                } else {
+                                    let mid = dd.next_mask_id();
+                                    dd.masks.push(Mask {
+                                        id: mid,
+                                        name,
+                                        visible: true,
+                                        invert,
+                                        refine: 25.0,
+                                        components: vec![MaskComponent {
+                                            name: None,
+                                            op: MaskOp::Add,
+                                            invert: false,
+                                            shape,
+                                        }],
+                                        adjust: adj,
+                                    });
+                                    s.active_mask = Some(mid);
+                                }
+                            }
+                        }
                     }
 
                     dd.retouch = r;
@@ -1951,6 +2021,19 @@ fn describe_develop_diff(prev: &lightcraft_develop::DevelopSettings, next: &ligh
     chk(&mut out, "Leg Length", pr.leg_length, nr.leg_length, true);
     chk(&mut out, "Hair Luster", pr.hair_luster, nr.hair_luster, false);
     chk(&mut out, "Stray Hair", pr.stray_hair, nr.stray_hair, false);
+    if next.grading != prev.grading {
+        out.push("Color Grade".to_string());
+    }
+    if next.mixer != prev.mixer {
+        out.push("Color Mixer".to_string());
+    }
+    if next.masks != prev.masks {
+        if let Some(m) = next.masks.last() {
+            out.push(format!("Mask ({})", m.name));
+        } else {
+            out.push("Cleared Masks".to_string());
+        }
+    }
     if next.crop.aspect != prev.crop.aspect
         && let Some((w, h)) = next.crop.aspect
     {

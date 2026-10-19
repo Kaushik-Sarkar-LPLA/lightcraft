@@ -120,7 +120,9 @@
           const imageDataUrl = (tel && typeof tel.imageDataUrl === "string")
             ? tel.imageDataUrl
             : "";
-          const userContent = imageDataUrl
+          const rawPrompt = (req.prompt || "").trim();
+          const needsVisualInspect = /describe|what is in|what's in|critique|analyze|analyse|look at|wearing|outfit|dress|shirt|background|scene|pose|expression|who is|where is/i.test(rawPrompt);
+          const userContent = (imageDataUrl && needsVisualInspect)
             ? [
                 { type: "text", text: userMsg },
                 { type: "image_url", image_url: { url: imageDataUrl } }
@@ -151,11 +153,25 @@
           const data = await resp.json();
           const content = data?.choices?.[0]?.message?.content || "";
           if (content) {
+            let blemishNote = req.blemishNote || "";
+            try {
+              const s = content.indexOf("{");
+              const e = content.lastIndexOf("}");
+              if (s >= 0 && e > s) {
+                const parsed = JSON.parse(content.slice(s, e + 1));
+                if (!blemishNote && Array.isArray(parsed.actions) && (parsed.actions.includes("healBlemishes") || parsed.actions.includes("heal_blemishes"))) {
+                  const br = JSON.parse(await command("spot.findBlemishes", JSON.stringify({ allSelected: !!req.allSelected })) || "{}");
+                  if (br && br.added > 0) {
+                    blemishNote = `Healed ${br.added} blemish${br.added === 1 ? "" : "es"}.`;
+                  }
+                }
+              }
+            } catch (_) {}
             await command("retouch.aiApply", JSON.stringify({
               response: content,
               prompt: req.prompt || "",
               allSelected: !!req.allSelected,
-              blemishNote: req.blemishNote || ""
+              blemishNote
             }));
           } else {
             await command("retouch.aiDone", JSON.stringify({
