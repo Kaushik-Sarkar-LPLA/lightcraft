@@ -10,6 +10,29 @@ use crate::state::AiChatMessage;
 use crate::theme::Tokens;
 use crate::widgets::{divider, register};
 
+/// Format a model ID into a human-friendly display label.
+pub fn format_model_label(model_id: &str, available: &[(String, String)]) -> String {
+    if let Some((_, label)) = available.iter().find(|(id, _)| id == model_id) {
+        return label.clone();
+    }
+    match model_id {
+        "gemini-4-argon-high" => "Gemini 4 Argon (High)".into(),
+        "gemini-4-argon-medium" => "Gemini 4 Argon (Medium)".into(),
+        "gemini-4-argon-low" => "Gemini 4 Argon (Fast)".into(),
+        "gemini-3.8-flash-high" => "Gemini 3.8 Flash (High)".into(),
+        "gemini-3.8-flash-medium" => "Gemini 3.8 Flash (Medium)".into(),
+        "gemini-3.8-flash-low" => "Gemini 3.8 Flash (Fast)".into(),
+        "claude-opus-5-5-high" => "Claude Opus 5.5 (High)".into(),
+        "claude-opus-5-5-medium" => "Claude Opus 5.5 (Medium)".into(),
+        "claude-opus-5-5-low" => "Claude Opus 5.5 (Low)".into(),
+        "claude-sonnet-5-5-high" => "Claude Sonnet 5.5 (High)".into(),
+        "claude-sonnet-5-5-medium" => "Claude Sonnet 5.5 (Medium)".into(),
+        "claude-sonnet-5-5-low" => "Claude Sonnet 5.5 (Low)".into(),
+        "gpt-oss-120b-medium" => "GPT-OSS 120B".into(),
+        other => other.to_string(),
+    }
+}
+
 /// Trigger an AI image edit / chat turn from either the AI Chat sidebar or the Retouch panel.
 pub fn send_message(app: &mut LightcraftApp, ctx: &egui::Context, prompt: &str, all_selected: bool) {
     let clean_prompt = prompt.trim().to_string();
@@ -32,11 +55,6 @@ pub fn send_message(app: &mut LightcraftApp, ctx: &egui::Context, prompt: &str, 
         let first_id = app.session.catalog.photos().next().map(|p| p.id);
         if let Some(first) = first_id {
             let _ = app.run("photo.select", json!({"id": first.0}));
-        } else {
-            let msg = crate::i18n::tr("Import a photo first, then chat with me to retouch or edit anything in the image.").to_string();
-            app.ui.ai_messages.push(AiChatMessage { role: "assistant".into(), text: msg.clone() });
-            app.toast(ctx, msg);
-            return;
         }
     }
 
@@ -79,46 +97,24 @@ pub fn send_message(app: &mut LightcraftApp, ctx: &egui::Context, prompt: &str, 
         if let Ok(r) = app.run("spot.findBlemishes", json!({"allSelected": all_selected})) {
             let n = r["added"].as_u64().unwrap_or(0);
             if n > 0 {
-                blemish_note = format!(" Healed {n} blemish{}.", if n == 1 { "" } else { "es" });
+                blemish_note = format!("Healed {n} blemish{}.", if n == 1 { "" } else { "es" });
             }
         }
     }
 
-    // Apply immediate local intent + YuNet ONNX + Oklab analysis first so the canvas updates with zero latency.
-    match app.run("retouch.aiApply", json!({"prompt": clean_prompt, "allSelected": all_selected})) {
-        Ok(r) => {
-            let mut summary = r["summary"].as_str().unwrap_or("Applied AI adjustments").to_string();
-            if !blemish_note.is_empty() {
-                summary.push_str(&blemish_note);
-            }
-            app.ui.ai_summary = summary.clone();
-            app.ui.ai_messages.push(AiChatMessage {
-                role: "assistant".into(),
-                text: summary.clone(),
-            });
-            app.toast(ctx, summary);
+    if cfg!(target_arch = "wasm32") {
+        // On Web, dispatch every chat message directly to Gemini Vision so the assistant responds
+        // intelligently without pushing a synthetic local placeholder message.
+        let telemetry = app.run("retouch.analyze", json!({})).unwrap_or_else(|_| json!({}));
+        if clean_prompt.is_empty() {
+            let _ = app.run("retouch.aiApply", json!({"prompt": "", "allSelected": all_selected}));
         }
-        Err(e) => {
-            let err_str = e.to_string();
-            app.ui.ai_messages.push(AiChatMessage {
-                role: "assistant".into(),
-                text: err_str,
-            });
-            app.toast(ctx, e);
-            return;
-        }
-    }
-
-    // Capture current preview + telemetry and dispatch to the server-side AI Vision endpoint on Web.
-    if cfg!(target_arch = "wasm32")
-        && let Ok(telemetry) = app.run("retouch.analyze", json!({}))
-    {
         let history: Vec<serde_json::Value> = app
             .ui
             .ai_messages
             .iter()
             .rev()
-            .take(8)
+            .take(10)
             .rev()
             .map(|m| json!({"role": m.role, "content": m.text}))
             .collect();
@@ -128,9 +124,34 @@ pub fn send_message(app: &mut LightcraftApp, ctx: &egui::Context, prompt: &str, 
             "model": app.ui.ai_model.trim(),
             "prompt": clean_prompt,
             "allSelected": all_selected,
+            "blemishNote": blemish_note,
             "history": history,
             "telemetry": telemetry,
         }));
+    } else {
+        // Offline / native desktop execution path:
+        match app.run("retouch.aiApply", json!({"prompt": clean_prompt, "allSelected": all_selected})) {
+            Ok(r) => {
+                let mut summary = r["summary"].as_str().unwrap_or("Updated image settings.").to_string();
+                if !blemish_note.is_empty() {
+                    summary = format!("{summary} {blemish_note}");
+                }
+                app.ui.ai_summary = summary.clone();
+                app.ui.ai_messages.push(AiChatMessage {
+                    role: "assistant".into(),
+                    text: summary.clone(),
+                });
+                app.toast(ctx, summary);
+            }
+            Err(e) => {
+                let err_str = e.to_string();
+                app.ui.ai_messages.push(AiChatMessage {
+                    role: "assistant".into(),
+                    text: err_str,
+                });
+                app.toast(ctx, e);
+            }
+        }
     }
 }
 
@@ -140,9 +161,13 @@ pub fn show_panel(app: &mut LightcraftApp, ui: &mut egui::Ui) {
     let t = Tokens::get(&ctx);
     let sel_n = app.session.selection.ids.len();
 
-    // 1. Sidebar Header
+    if app.ui.ai_available_models.is_empty() {
+        app.ui.ai_available_models = crate::state::default_ai_models();
+    }
+
+    // 1. Sidebar Header + Model Selector
     egui::Frame::NONE
-        .inner_margin(Margin { left: 24, right: 20, top: 14, bottom: 8 })
+        .inner_margin(Margin { left: 20, right: 18, top: 14, bottom: 8 })
         .show(ui, |ui| {
             ui.horizontal(|ui| {
                 let dot_color = if app.ui.ai_busy {
@@ -154,7 +179,7 @@ pub fn show_panel(app: &mut LightcraftApp, ui: &mut egui::Ui) {
                 ui.painter().circle_filled(dot_rect.center(), 4.0, dot_color);
 
                 ui.label(
-                    RichText::new(crate::i18n::tr("AI Chat"))
+                    RichText::new(crate::i18n::tr("AI Studio Chat"))
                         .font(t.semibold(15.0))
                         .color(t.text),
                 );
@@ -190,6 +215,23 @@ pub fn show_panel(app: &mut LightcraftApp, ui: &mut egui::Ui) {
             };
             ui.add_space(2.0);
             ui.label(RichText::new(active_label).font(t.font(11.5)).color(t.text_dim));
+
+            ui.add_space(6.0);
+            ui.horizontal(|ui| {
+                ui.label(RichText::new(crate::i18n::tr("Model")).font(t.font(11.5)).color(t.text_label));
+                let current_label = format_model_label(&app.ui.ai_model, &app.ui.ai_available_models);
+                let combo_w = (ui.available_width() - 4.0).max(120.0);
+                let combo_resp = egui::ComboBox::from_id_salt("ai_chat_model_select")
+                    .selected_text(RichText::new(current_label).font(t.font(11.5)).color(t.text))
+                    .width(combo_w)
+                    .show_ui(ui, |ui| {
+                        let models = app.ui.ai_available_models.clone();
+                        for (id, label) in models {
+                            ui.selectable_value(&mut app.ui.ai_model, id, label);
+                        }
+                    });
+                register(&ctx, "field:aiModelSelect", combo_resp.response.rect);
+            });
         });
 
     divider(ui);
@@ -332,8 +374,9 @@ pub fn show_panel(app: &mut LightcraftApp, ui: &mut egui::Ui) {
 
                     if app.ui.ai_busy {
                         ui.add_space(8.0);
+                        let m_label = format_model_label(&app.ui.ai_model, &app.ui.ai_available_models);
                         ui.label(
-                            RichText::new(crate::i18n::tr("✨ Refining with AI Vision…"))
+                            RichText::new(format!("✨ {} {m_label}…", crate::i18n::tr("Thinking with")))
                                 .font(t.font(11.5))
                                 .italics()
                                 .color(t.accent),

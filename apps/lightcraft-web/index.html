@@ -42,9 +42,18 @@
       await init({ module_or_path: module });
       // automation: `await lightcraft.command("library.info", "{}")` → JSON text
       globalThis.lightcraft = { command };
+      fetch("/api/ai/v1/models", { cache: "no-store" })
+        .then(r => r.ok ? r.json() : null)
+        .then(d => {
+          if (d && Array.isArray(d.data) && d.data.length) {
+            command("retouch.aiModels", JSON.stringify({ models: d.data })).catch(() => {});
+          }
+        })
+        .catch(() => {});
       globalThis.lightcraftAiRetouch = async (reqJson) => {
+        let req = {};
         try {
-          const req = JSON.parse(reqJson || "{}");
+          req = JSON.parse(reqJson || "{}");
           const base = (req.endpoint || "/api/ai/v1").replace(/\/+$/, "");
           const model = req.model || "gemini-4-argon-medium";
           let apiKey = (req.apiKey || "").trim();
@@ -59,38 +68,57 @@
           }
           const userGoal = (req.prompt && req.prompt.trim())
             ? req.prompt.trim()
-            : "Auto-retouch this portrait for natural high-end skin texture, balanced shine and under-eye circles, bright eyes, and flattering 3D contour.";
+            : "Auto-retouch this portrait: analyze the subject's skin, lighting, eyes, teeth, facial structure, and body proportions, and dial in natural high-end retouching and tone balance.";
           const sysPrompt =
-            "You are the LightCraft AI Studio Assistant. " +
-            "You can edit ANYTHING in the photo (Light, White Balance, Color, Effects, Detail, B&W Treatment, and all 34 Portrait & Full-Body Retouch sliders). " +
-            "Given the portrait/image telemetry and user chat instruction, return ONLY a valid JSON object (no markdown outside JSON) with keys: " +
-            "{\"retouch\":{\"skinSmooth\":0..100,\"skinTexture\":0..100,\"skinToneEven\":0..100,\"shineControl\":0..100," +
-            "\"darkCircles\":0..100,\"wrinkleReduce\":0..100,\"skinRadiance\":-100..100,\"skinWarmth\":-100..100," +
-            "\"skinRedness\":-100..100,\"eyeBrighten\":0..100,\"eyeWhiten\":0..100,\"eyeClarity\":0..100," +
-            "\"eyebrowEnhance\":-100..100,\"teethWhiten\":0..100,\"lipEnhance\":-100..100,\"lipMoisture\":0..100," +
-            "\"faceContour\":0..100,\"faceSlim\":-100..100,\"eyeEnlarge\":-100..100,\"noseSlim\":-100..100," +
-            "\"chinLength\":-100..100,\"smileLift\":-100..100,\"bodySlim\":-100..100,\"waistSlim\":-100..100," +
-            "\"stomachFlat\":0..100,\"hipEnhance\":-100..100,\"shoulderWidth\":-100..100,\"armSlim\":-100..100," +
-            "\"neckSlim\":-100..100,\"chestEnhance\":-100..100,\"legLength\":-100..100," +
-            "\"hairLuster\":0..100,\"strayHair\":0..100}," +
-            "\"light\":{\"exposure\":-3.0..3.0,\"contrast\":-100..100,\"highlights\":-100..100,\"shadows\":-100..100,\"whites\":-100..100,\"blacks\":-100..100}," +
-            "\"wb\":{\"temp\":-100..100,\"tint\":-100..100}," +
-            "\"color\":{\"vibrance\":-100..100,\"saturation\":-100..100}," +
-            "\"effects\":{\"texture\":-100..100,\"clarity\":-100..100,\"dehaze\":-100..100,\"vignette\":-100..100,\"grain\":0..100}," +
-            "\"detail\":{\"sharpness\":0..150,\"nrLuminance\":0..100}," +
-            "\"treatment\":\"color\"|\"bw\"," +
-            "\"summary\":\"Conversational 1-sentence reply explaining what you adjusted in the image\"}";
+            "You are the LightCraft AI Studio Director (powered by Gemini Vision), an expert portrait/body retoucher, colorist, and photography assistant.\n" +
+            "Return ONLY a single valid JSON object (no markdown fences outside JSON).\n\n" +
+            "1. CONVERSATION / Q&A MODE:\n" +
+            "If the user is greeting you, asking a question about the photo (composition, lighting critique, skin analysis, EXIF/camera details, editing advice), or chatting without asking to modify settings, return:\n" +
+            "{\"mode\":\"chat\",\"reply\":\"Your detailed, intelligent, helpful response.\"}\n\n" +
+            "2. EDIT & RETOUCH MODE:\n" +
+            "If the user asks to adjust, retouch, reshape, color-grade, crop, or transform anything in the image, return:\n" +
+            "{\"mode\":\"edit\",\"reply\":\"Natural, specific explanation of what you observed and adjusted\", ...ONLY the setting groups/keys you want to change...}\n" +
+            "CRITICAL RULES:\n" +
+            "- Include ONLY the specific sliders you are changing! Do NOT include untouched sliders or set unmentioned sliders to 0, so existing edits on the photo are preserved.\n" +
+            "- Answer directly in ONE single turn using the provided portraitAnalysis, meta, and currentSettings telemetry whenever possible; only call view_file on an attached image if the user explicitly asks about visual scene content (clothing, background objects, composition) not present in the telemetry.\n\n" +
+            "Available setting groups & slider ranges (include only keys you are modifying):\n" +
+            "- \"actions\": optional array from [\"reset\", \"autoRetouch\", \"healBlemishes\"]\n" +
+            "- \"retouch\": {\n" +
+            "    \"skinSmooth\":0..100, \"skinTexture\":0..100, \"skinToneEven\":0..100, \"shineControl\":0..100, \"darkCircles\":0..100, \"wrinkleReduce\":0..100,\n" +
+            "    \"skinRadiance\":-100..100, \"skinWarmth\":-100..100, \"skinRedness\":-100..100,\n" +
+            "    \"eyeBrighten\":0..100, \"eyeWhiten\":0..100, \"eyeClarity\":0..100, \"eyebrowEnhance\":-100..100,\n" +
+            "    \"teethWhiten\":0..100, \"lipEnhance\":-100..100, \"lipMoisture\":0..100,\n" +
+            "    \"faceContour\":0..100, \"faceSlim\":-100..100, \"eyeEnlarge\":-100..100, \"noseSlim\":-100..100, \"chinLength\":-100..100, \"smileLift\":-100..100,\n" +
+            "    \"bodySlim\":-100..100, \"waistSlim\":-100..100, \"stomachFlat\":0..100, \"hipEnhance\":-100..100, \"shoulderWidth\":-100..100, \"armSlim\":-100..100, \"neckSlim\":-100..100, \"chestEnhance\":-100..100, \"legLength\":-100..100,\n" +
+            "    \"hairLuster\":0..100, \"strayHair\":0..100\n" +
+            "  }\n" +
+            "- \"light\": {\"exposure\":-4.0..4.0, \"contrast\":-100..100, \"highlights\":-100..100, \"shadows\":-100..100, \"whites\":-100..100, \"blacks\":-100..100}\n" +
+            "- \"wb\": {\"temp\":-100..100, \"tint\":-100..100}\n" +
+            "- \"color\": {\"vibrance\":-100..100, \"saturation\":-100..100}\n" +
+            "- \"grading\": {\"shadows\":{\"hue\":0..360,\"sat\":0..100,\"lum\":-100..100}, \"midtones\":{\"hue\":0..360,\"sat\":0..100,\"lum\":-100..100}, \"highlights\":{\"hue\":0..360,\"sat\":0..100,\"lum\":-100..100}}\n" +
+            "- \"mixer\": {\"red\":{\"hue\":-100..100,\"sat\":-100..100,\"lum\":-100..100}, \"orange\":{...}, \"yellow\":{...}, \"green\":{...}, \"aqua\":{...}, \"blue\":{...}, \"purple\":{...}, \"magenta\":{...}}\n" +
+            "- \"effects\": {\"texture\":-100..100, \"clarity\":-100..100, \"dehaze\":-100..100, \"vignette\":-100..100, \"grain\":0..100}\n" +
+            "- \"detail\": {\"sharpness\":0..150, \"nrLuminance\":0..100, \"nrColor\":0..100}\n" +
+            "- \"crop\": {\"aspect\":\"1:1\"|\"4:5\"|\"16:9\"|\"9:16\"|\"3:2\"|\"5:7\"|\"original\", \"angle\":-45..45, \"flipH\":bool, \"flipV\":bool}\n" +
+            "- \"treatment\": \"color\"|\"bw\"";
+          const tel = req.telemetry || {};
+          const contextObj = {
+            fileName: tel.fileName || "",
+            meta: tel.meta || {},
+            portraitAnalysis: tel.analysis || {},
+            currentSettings: tel.current || {}
+          };
           const historyText = Array.isArray(req.history) && req.history.length
-            ? "\nRecent Chat:\n" + req.history.map(m => `${m.role}: ${m.content}`).join("\n")
+            ? "\nConversation History:\n" + req.history.map(m => `${m.role}: ${m.content}`).join("\n")
             : "";
           const userMsg =
-            "Image Telemetry & Current Settings:\n" +
-            JSON.stringify(req.telemetry?.analysis || req.telemetry || {}) +
+            "Photo Telemetry & Current Active Settings:\n" +
+            JSON.stringify(contextObj) +
             historyText +
-            "\n\nUser Chat Request: " + userGoal +
+            "\n\nUser Message: " + userGoal +
             "\n\nRespond ONLY with the JSON object.";
-          const imageDataUrl = (req.telemetry && typeof req.telemetry.imageDataUrl === "string")
-            ? req.telemetry.imageDataUrl
+          const imageDataUrl = (tel && typeof tel.imageDataUrl === "string")
+            ? tel.imageDataUrl
             : "";
           const userContent = imageDataUrl
             ? [
@@ -113,7 +141,11 @@
           });
           if (!resp.ok) {
             const errTxt = await resp.text().catch(() => String(resp.status));
-            await command("retouch.aiDone", JSON.stringify({ error: "HTTP " + resp.status + ": " + errTxt.slice(0, 160) }));
+            await command("retouch.aiDone", JSON.stringify({
+              error: "HTTP " + resp.status + ": " + errTxt.slice(0, 160),
+              prompt: req.prompt || "",
+              allSelected: !!req.allSelected
+            }));
             return;
           }
           const data = await resp.json();
@@ -122,13 +154,22 @@
             await command("retouch.aiApply", JSON.stringify({
               response: content,
               prompt: req.prompt || "",
-              allSelected: !!req.allSelected
+              allSelected: !!req.allSelected,
+              blemishNote: req.blemishNote || ""
             }));
           } else {
-            await command("retouch.aiDone", JSON.stringify({ error: "Empty completion response" }));
+            await command("retouch.aiDone", JSON.stringify({
+              error: "Empty completion response",
+              prompt: req.prompt || "",
+              allSelected: !!req.allSelected
+            }));
           }
         } catch (err) {
-          await command("retouch.aiDone", JSON.stringify({ error: String(err) }));
+          await command("retouch.aiDone", JSON.stringify({
+            error: String(err),
+            prompt: req.prompt || "",
+            allSelected: !!req.allSelected
+          }));
         }
       };
       start(font);

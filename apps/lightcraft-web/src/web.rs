@@ -614,16 +614,62 @@ impl WebApp {
         let inbox = INBOX.with(|q| std::mem::take(&mut *q.borrow_mut()));
         for (id, params, (resolve, reject)) in inbox {
             let params: serde_json::Value = serde_json::from_str(&params).unwrap_or(json!({}));
-            if id == "retouch.aiDone" {
-                self.app.ui.ai_busy = false;
-                if let Some(err) = params.get("error").and_then(serde_json::Value::as_str)
-                    && !err.is_empty()
-                {
-                    log::warn!("AI Retouch endpoint notice: {err}");
+            if id == "retouch.aiModels" {
+                if let Some(arr) = params.get("models").and_then(serde_json::Value::as_array) {
+                    let mut list: Vec<(String, String)> = Vec::new();
+                    let defaults = lightcraft_ui_egui::state::default_ai_models();
+                    for item in arr {
+                        let mid = item
+                            .get("id")
+                            .and_then(serde_json::Value::as_str)
+                            .or_else(|| item.as_str())
+                            .unwrap_or("")
+                            .trim();
+                        if !mid.is_empty() && !list.iter().any(|(k, _)| k == mid) {
+                            let label = lightcraft_ui_egui::panels::ai_chat::format_model_label(mid, &defaults);
+                            list.push((mid.to_string(), label));
+                        }
+                    }
+                    if !list.is_empty() {
+                        self.app.ui.ai_available_models = list;
+                    }
                 }
                 let _ = resolve.call1(&JsValue::NULL, &"{}".into());
                 continue;
             }
+            if id == "retouch.aiDone" {
+                self.app.ui.ai_busy = false;
+                let prompt = params.get("prompt").and_then(serde_json::Value::as_str).unwrap_or("").trim();
+                let all_sel = params.get("allSelected").and_then(serde_json::Value::as_bool).unwrap_or(false);
+                if let Some(err) = params.get("error").and_then(serde_json::Value::as_str)
+                    && !err.is_empty()
+                {
+                    log::warn!("AI Retouch endpoint notice: {err}");
+                    let fallback_msg = if !prompt.is_empty()
+                        && let Ok(v) = self.app.run("retouch.aiApply", json!({"prompt": prompt, "allSelected": all_sel}))
+                        && let Some(s) = v.get("summary").and_then(serde_json::Value::as_str)
+                        && !s.is_empty()
+                    {
+                        s.to_string()
+                    } else {
+                        format!("AI service busy ({err}). Try again in a moment or switch models above.")
+                    };
+                    self.app.ui.ai_summary = fallback_msg.clone();
+                    self.app.ui.ai_messages.push(lightcraft_ui_egui::state::AiChatMessage {
+                        role: "assistant".into(),
+                        text: fallback_msg.clone(),
+                    });
+                    notice(fallback_msg);
+                }
+                let _ = resolve.call1(&JsValue::NULL, &"{}".into());
+                continue;
+            }
+            let blemish_note = params
+                .get("blemishNote")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("")
+                .trim()
+                .to_string();
             let r = if id == "web.stats" { Ok(self.web_stats()) } else { self.app.run(&id, params) };
             if id == "retouch.aiApply" {
                 self.app.ui.ai_busy = false;
@@ -631,15 +677,24 @@ impl WebApp {
                     && let Some(s) = v.get("summary").and_then(serde_json::Value::as_str)
                     && !s.is_empty()
                 {
-                    self.app.ui.ai_summary = s.to_string();
-                    if let Some(last) = self.app.ui.ai_messages.last_mut().filter(|m| m.role == "assistant") {
-                        last.text = s.to_string();
-                    } else {
-                        self.app.ui.ai_messages.push(lightcraft_ui_egui::state::AiChatMessage {
-                            role: "assistant".into(),
-                            text: s.to_string(),
-                        });
+                    let mut full_msg = s.to_string();
+                    if !blemish_note.is_empty() && !full_msg.contains(&blemish_note) {
+                        full_msg = format!("{full_msg} {blemish_note}");
                     }
+                    if let Some(diff_arr) = v.get("diff").and_then(serde_json::Value::as_array) {
+                        let diffs: Vec<&str> = diff_arr.iter().filter_map(serde_json::Value::as_str).collect();
+                        if !diffs.is_empty() {
+                            let badge = diffs.join(" · ");
+                            if !full_msg.contains(&badge) {
+                                full_msg = format!("{full_msg}\n\n✦ {badge}");
+                            }
+                        }
+                    }
+                    self.app.ui.ai_summary = s.to_string();
+                    self.app.ui.ai_messages.push(lightcraft_ui_egui::state::AiChatMessage {
+                        role: "assistant".into(),
+                        text: full_msg,
+                    });
                     notice(s.to_string());
                 }
             }

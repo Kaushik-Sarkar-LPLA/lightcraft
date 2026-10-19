@@ -924,24 +924,27 @@ pub struct UiState {
     pub print: crate::print_view::PrintUi,
     /// Internal AI proxy endpoint (`/api/ai/v1`).
     pub ai_endpoint: String,
-    /// Internal AI model (`gemini-4-argon-medium`).
+    /// Selected AI model (`gemini-4-argon-medium`, `gemini-4-argon-high`, `gemini-3.8-flash-high`, etc.).
     pub ai_model: String,
+    /// Available AI models `(id, label)` for the AI Chat model selector.
+    #[serde(skip, default = "default_ai_models")]
+    pub ai_available_models: Vec<(String, String)>,
     /// Optional client-side API key override (never shown in UI).
     #[serde(skip)]
     pub ai_api_key: String,
-    /// Current message being typed in the floating AI chat.
+    /// Current message being typed in the AI chat.
     #[serde(skip)]
     pub ai_prompt: String,
-    /// Whether the always-on floating AI chat is expanded (`true`) or collapsed to its floating pill (`false`).
+    /// Whether the AI chat is open.
     #[serde(default = "yes")]
     pub ai_chat_open: bool,
-    /// Request keyboard focus on the floating AI chat input on the next frame.
+    /// Request keyboard focus on the AI chat input on the next frame.
     #[serde(skip)]
     pub ai_chat_focus: bool,
-    /// Opt-in flag to draw the floating AI chat inside headless unit tests.
+    /// Opt-in flag to draw the AI chat inside headless unit tests.
     #[serde(skip)]
     pub ai_chat_test: bool,
-    /// Conversation history in the floating AI chat.
+    /// Conversation history in the AI chat.
     #[serde(skip)]
     pub ai_messages: Vec<AiChatMessage>,
     /// Whether an AI request is currently in flight.
@@ -953,6 +956,21 @@ pub struct UiState {
     /// Queued AI HTTP completion request for the host (`apps/lightcraft-web`) to dispatch asynchronously.
     #[serde(skip)]
     pub ai_pending_request: Option<serde_json::Value>,
+}
+
+/// Default list of AI models offered in the AI Chat selector (updated dynamically from `/v1/models` on Web).
+pub fn default_ai_models() -> Vec<(String, String)> {
+    vec![
+        ("gemini-4-argon-high".into(), "Gemini 4 Argon (High)".into()),
+        ("gemini-4-argon-medium".into(), "Gemini 4 Argon (Medium)".into()),
+        ("gemini-4-argon-low".into(), "Gemini 4 Argon (Fast)".into()),
+        ("gemini-3.8-flash-high".into(), "Gemini 3.8 Flash (High)".into()),
+        ("gemini-3.8-flash-medium".into(), "Gemini 3.8 Flash (Medium)".into()),
+        ("gemini-3.8-flash-low".into(), "Gemini 3.8 Flash (Fast)".into()),
+        ("claude-opus-5-5-high".into(), "Claude Opus 5.5 (High)".into()),
+        ("claude-sonnet-5-5-high".into(), "Claude Sonnet 5.5 (High)".into()),
+        ("gpt-oss-120b-medium".into(), "GPT-OSS 120B".into()),
+    ]
 }
 
 /// One message in the floating AI assistant chat.
@@ -1434,6 +1452,7 @@ impl Default for UiState {
             print: Default::default(),
             ai_endpoint: "/api/ai/v1".into(),
             ai_model: "gemini-4-argon-medium".into(),
+            ai_available_models: default_ai_models(),
             ai_api_key: String::new(),
             ai_prompt: String::new(),
             ai_chat_open: true,
@@ -1530,6 +1549,9 @@ impl UiState {
         }
         if self.ai_model.trim().is_empty() {
             self.ai_model = "gemini-4-argon-medium".into();
+        }
+        if self.ai_available_models.is_empty() {
+            self.ai_available_models = default_ai_models();
         }
         if !crate::state::PREVIEW_LIMITS.contains(&self.settings.preview_limit) {
             self.settings.preview_limit = AppSettings::default().preview_limit;

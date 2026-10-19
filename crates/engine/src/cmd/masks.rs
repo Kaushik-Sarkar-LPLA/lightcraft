@@ -904,70 +904,111 @@ pub fn specs() -> Vec<CommandSpec> {
             "Analyze Portrait for AI Retouch",
             [],
             None,
-            "{id?} — run YuNet ONNX neural 5-landmark detection and Oklab frequency-separation skin/feature analysis on the photo → {id, fileName, imageDataUrl, analysis, current}",
-            has_active,
+            "{id?} — run YuNet ONNX neural 5-landmark detection and Oklab frequency-separation skin/feature analysis on the photo → {id, fileName, imageDataUrl, meta, analysis, current}",
+            super::always,
             |s, p| {
-                let c = "retouch.analyze";
-                let id = p
+                let id_opt = p
                     .get("id")
                     .and_then(Value::as_u64)
                     .map(crate::PhotoId)
                     .or_else(|| s.active())
-                    .ok_or_else(|| bad(c, "no active photo"))?;
-                let base_settings = lightcraft_develop::DevelopSettings::default();
-                let job = s.preview_job(id, 384, 384, false, &base_settings).ok_or_else(|| bad(c, "could not render preview"))?;
-                let rendered = job.run().rendered.map_err(|e| bad(c, e))?;
-                let rgba = rendered.image;
-                let enc_img = lightcraft_codecs::EncodeImage::rgba8(&rgba);
-                let jpeg_bytes = lightcraft_codecs::encode_jpeg(
-                    &enc_img,
-                    78,
-                    lightcraft_codecs::ChromaSubsampling::S420,
-                    &lightcraft_codecs::EncodeMeta::default(),
-                )
-                .unwrap_or_default();
-                let image_data_url = if jpeg_bytes.is_empty() {
-                    String::new()
-                } else {
-                    format!("data:image/jpeg;base64,{}", encode_base64(&jpeg_bytes))
+                    .or_else(|| s.catalog.photos().next().map(|ph| ph.id));
+                let Some(id) = id_opt else {
+                    return Ok(json!({
+                        "id": null,
+                        "fileName": "",
+                        "imageDataUrl": "",
+                        "meta": {},
+                        "analysis": null,
+                        "current": {}
+                    }));
                 };
-                let mut lin = lightcraft_raster::Rgb32f::new(rgba.width, rgba.height);
-                for (dst, src) in lin.data.iter_mut().zip(rgba.data.iter()) {
-                    let r = (f32::from(src[0]) / 255.0).powf(2.2);
-                    let g = (f32::from(src[1]) / 255.0).powf(2.2);
-                    let b = (f32::from(src[2]) / 255.0).powf(2.2);
-                    *dst = [r, g, b];
-                }
-                let analysis = lightcraft_pipeline::retouch::analyze_portrait(&lin);
+
+                let rendered_opt = s
+                    .render_job(id, 384, 384, false, true)
+                    .and_then(|job| job.run().rendered.ok())
+                    .or_else(|| s.thumb_job(id, 384).and_then(|job| job.run().rendered.ok()));
+
+                let (image_data_url, analysis) = if let Some(rendered) = rendered_opt {
+                    let rgba = rendered.image;
+                    let enc_img = lightcraft_codecs::EncodeImage::rgba8(&rgba);
+                    let jpeg_bytes = lightcraft_codecs::encode_jpeg(
+                        &enc_img,
+                        78,
+                        lightcraft_codecs::ChromaSubsampling::S420,
+                        &lightcraft_codecs::EncodeMeta::default(),
+                    )
+                    .unwrap_or_default();
+                    let data_url = if jpeg_bytes.is_empty() {
+                        String::new()
+                    } else {
+                        format!("data:image/jpeg;base64,{}", encode_base64(&jpeg_bytes))
+                    };
+                    let mut lin = lightcraft_raster::Rgb32f::new(rgba.width, rgba.height);
+                    for (dst, src) in lin.data.iter_mut().zip(rgba.data.iter()) {
+                        let r = (f32::from(src[0]) / 255.0).powf(2.2);
+                        let g = (f32::from(src[1]) / 255.0).powf(2.2);
+                        let b = (f32::from(src[2]) / 255.0).powf(2.2);
+                        *dst = [r, g, b];
+                    }
+                    (data_url, lightcraft_pipeline::retouch::analyze_portrait(&lin))
+                } else {
+                    (String::new(), lightcraft_pipeline::retouch::analyze_portrait(&lightcraft_raster::Rgb32f::new(0, 0)))
+                };
+
                 let cur = s.develop_of(id).unwrap_or_default();
                 let k_to_rel = |k: f64| -> f64 {
                     ((1e6 / 6500.0 - 1e6 / k.clamp(2000.0, 50000.0)) / 0.8).clamp(-100.0, 100.0)
                 };
-                let file_name = s.catalog.photo(id).map(|ph| ph.file_name.clone()).unwrap_or_default();
+                let (file_name, meta_json) = if let Some(ph) = s.catalog.photo(id) {
+                    (
+                        ph.file_name.clone(),
+                        json!({
+                            "width": ph.width,
+                            "height": ph.height,
+                            "camera": ph.meta.camera,
+                            "lens": ph.meta.lens,
+                            "iso": ph.meta.iso,
+                            "aperture": ph.meta.aperture,
+                            "shutter": ph.meta.shutter,
+                            "focalMm": ph.meta.focal_mm,
+                            "rating": ph.rating,
+                            "masksCount": cur.masks.len(),
+                            "spotsCount": cur.spots.len(),
+                        }),
+                    )
+                } else {
+                    (String::new(), json!({}))
+                };
                 Ok(json!({
                     "id": id.0,
                     "fileName": file_name,
                     "imageDataUrl": image_data_url,
+                    "meta": meta_json,
                     "analysis": analysis,
                     "current": {
                         "retouch": cur.retouch,
-                        "exposure": cur.light.exposure,
-                        "contrast": cur.light.contrast,
-                        "highlights": cur.light.highlights,
-                        "shadows": cur.light.shadows,
-                        "whites": cur.light.whites,
-                        "blacks": cur.light.blacks,
-                        "temp": k_to_rel(cur.wb.temp).round(),
-                        "tint": cur.wb.tint,
-                        "vibrance": cur.color.vibrance,
-                        "saturation": cur.color.saturation,
-                        "texture": cur.effects.texture,
-                        "clarity": cur.effects.clarity,
-                        "dehaze": cur.effects.dehaze,
-                        "vignette": cur.vignette.amount,
-                        "grain": cur.grain.amount,
-                        "sharpness": cur.detail.sharpen_amount,
-                        "nrLuminance": cur.detail.nr_luminance,
+                        "light": cur.light,
+                        "wb": {
+                            "temp": k_to_rel(cur.wb.temp).round(),
+                            "kelvin": cur.wb.temp.round(),
+                            "tint": cur.wb.tint,
+                        },
+                        "color": cur.color,
+                        "grading": cur.grading,
+                        "mixer": cur.mixer,
+                        "effects": {
+                            "texture": cur.effects.texture,
+                            "clarity": cur.effects.clarity,
+                            "dehaze": cur.effects.dehaze,
+                            "vignette": cur.vignette.amount,
+                            "grain": cur.grain.amount,
+                        },
+                        "detail": {
+                            "sharpness": cur.detail.sharpen_amount,
+                            "nrLuminance": cur.detail.nr_luminance,
+                            "nrColor": cur.detail.nr_color,
+                        },
                         "treatment": cur.treatment,
                     }
                 }))
@@ -978,20 +1019,12 @@ pub fn specs() -> Vec<CommandSpec> {
             "AI Retouch Director",
             ["Develop"],
             None,
-            "{response?: string, prompt?: string, allSelected?: bool} — apply AI Studio Assistant recipe from Gemini/OpenAI JSON completion or YuNet ONNX + Oklab image analysis → {changed, summary, neural}",
-            has_active,
+            "{response?: string, prompt?: string, allSelected?: bool} — apply AI Studio Assistant recipe from Gemini/OpenAI JSON completion or YuNet ONNX + Oklab image analysis → {changed, summary, diff, neural}",
+            super::always,
             |s, p| {
-                let c = "retouch.aiApply";
-                let active_id = s.active().ok_or_else(|| bad(c, "no active photo"))?;
                 let all_selected = p.get("allSelected").and_then(Value::as_bool).unwrap_or(false);
                 let prompt = p.get("prompt").and_then(Value::as_str).unwrap_or("").trim();
                 let response_str = p.get("response").and_then(Value::as_str).unwrap_or("").trim();
-
-                let target_ids: Vec<crate::PhotoId> = if all_selected && !s.selection.ids.is_empty() {
-                    s.selection.ids.clone()
-                } else {
-                    vec![active_id]
-                };
 
                 // Extract optional JSON object from LLM completion text (handles ```json ... ``` fences or raw JSON).
                 let parsed_ai: Option<Value> = if !response_str.is_empty() {
@@ -1008,6 +1041,53 @@ pub fn specs() -> Vec<CommandSpec> {
                     None
                 };
 
+                let ai_reply: Option<String> = parsed_ai
+                    .as_ref()
+                    .and_then(|ai| {
+                        ai.get("reply")
+                            .or_else(|| ai.get("summary"))
+                            .or_else(|| ai.get("message"))
+                            .and_then(Value::as_str)
+                    })
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_string)
+                    .or_else(|| {
+                        if !response_str.is_empty() && parsed_ai.is_none() {
+                            Some(response_str.to_string())
+                        } else {
+                            None
+                        }
+                    });
+
+                // Pure conversational / Q&A turn (no edits requested):
+                let is_chat_only = parsed_ai.as_ref().is_some_and(|ai| {
+                    ai.get("mode").and_then(Value::as_str).is_some_and(|m| m.eq_ignore_ascii_case("chat"))
+                        || ai.get("isEdit").and_then(Value::as_bool) == Some(false)
+                });
+                if is_chat_only {
+                    return Ok(json!({
+                        "changed": 0,
+                        "summary": ai_reply.unwrap_or_else(|| "Here to help — ask me anything about this photo or tell me what to adjust.".to_string()),
+                        "neural": false,
+                    }));
+                }
+
+                let active_opt = s.active().or_else(|| s.catalog.photos().next().map(|ph| ph.id));
+                let Some(active_id) = active_opt else {
+                    return Ok(json!({
+                        "changed": 0,
+                        "summary": ai_reply.unwrap_or_else(|| "Import or select a photo first so I can inspect and edit it.".to_string()),
+                        "neural": false,
+                    }));
+                };
+
+                let target_ids: Vec<crate::PhotoId> = if all_selected && !s.selection.ids.is_empty() {
+                    s.selection.ids.clone()
+                } else {
+                    vec![active_id]
+                };
+
                 let rel_to_k = |rel: f64| -> f64 {
                     let r = rel.clamp(-100.0, 100.0);
                     (1e6 / (1e6 / 6500.0 - r * 0.8)).clamp(2000.0, 50000.0)
@@ -1016,58 +1096,63 @@ pub fn specs() -> Vec<CommandSpec> {
                     ((1e6 / 6500.0 - 1e6 / k.clamp(2000.0, 50000.0)) / 0.8).clamp(-100.0, 100.0)
                 };
 
+                let actions: Vec<String> = parsed_ai
+                    .as_ref()
+                    .and_then(|ai| ai.get("actions"))
+                    .and_then(Value::as_array)
+                    .map(|arr| {
+                        arr.iter()
+                            .filter_map(Value::as_str)
+                            .map(|s| s.trim().to_ascii_lowercase())
+                            .collect()
+                    })
+                    .unwrap_or_default();
+
                 let mut ops: Vec<lightcraft_catalog::Op> = Vec::new();
-                let mut summary = String::new();
+                let mut summary = ai_reply.unwrap_or_default();
                 let mut any_neural = false;
+                let mut diff_notes: Vec<String> = Vec::new();
 
                 for id in target_ids {
-                    let base_settings = lightcraft_develop::DevelopSettings::default();
-                    let analysis = if let Some(job) = s.preview_job(id, 512, 512, false, &base_settings)
-                        && let Ok(rendered) = job.run().rendered
-                    {
-                        let rgba = rendered.image;
-                        let mut lin = lightcraft_raster::Rgb32f::new(rgba.width, rgba.height);
-                        for (dst, src) in lin.data.iter_mut().zip(rgba.data.iter()) {
-                            let r = (f32::from(src[0]) / 255.0).powf(2.2);
-                            let g = (f32::from(src[1]) / 255.0).powf(2.2);
-                            let b = (f32::from(src[2]) / 255.0).powf(2.2);
-                            *dst = [r, g, b];
-                        }
-                        lightcraft_pipeline::retouch::analyze_portrait(&lin)
-                    } else {
-                        lightcraft_pipeline::retouch::analyze_portrait(&lightcraft_raster::Rgb32f::new(0, 0))
-                    };
+                    let prev_dd = (*s.develop_of(id).unwrap_or_default()).clone();
+                    let mut dd = prev_dd.clone();
+                    let mut r = dd.retouch.clone();
+                    let q = prompt.to_ascii_lowercase();
 
-                    if analysis.neural_detector {
-                        any_neural = true;
+                    let want_auto_retouch = q.is_empty()
+                        || actions.iter().any(|a| a == "autoretouch" || a == "auto_retouch")
+                        || (parsed_ai.is_none()
+                            && !dd.retouch.is_active()
+                            && (q.contains("auto retouch")
+                                || q.contains("auto-retouch")
+                                || q == "retouch"
+                                || q == "retouch portrait"));
+
+                    if want_auto_retouch {
+                        let base_settings = lightcraft_develop::DevelopSettings::default();
+                        let analysis = if let Some(job) = s.preview_job(id, 512, 512, false, &base_settings)
+                            && let Ok(rendered) = job.run().rendered
+                        {
+                            let rgba = rendered.image;
+                            let mut lin = lightcraft_raster::Rgb32f::new(rgba.width, rgba.height);
+                            for (dst, src) in lin.data.iter_mut().zip(rgba.data.iter()) {
+                                let rv = (f32::from(src[0]) / 255.0).powf(2.2);
+                                let gv = (f32::from(src[1]) / 255.0).powf(2.2);
+                                let bv = (f32::from(src[2]) / 255.0).powf(2.2);
+                                *dst = [rv, gv, bv];
+                            }
+                            lightcraft_pipeline::retouch::analyze_portrait(&lin)
+                        } else {
+                            lightcraft_pipeline::retouch::analyze_portrait(&lightcraft_raster::Rgb32f::new(0, 0))
+                        };
+                        if analysis.neural_detector {
+                            any_neural = true;
+                        }
+                        r = analysis.recommended;
                     }
 
-                    let mut dd = (*s.develop_of(id).unwrap_or_default()).clone();
-                    let q = prompt.to_ascii_lowercase();
-                    let mentions_retouch = q.is_empty()
-                        || q.contains("retouch")
-                        || q.contains("skin")
-                        || q.contains("smooth")
-                        || q.contains("portrait")
-                        || q.contains("face")
-                        || q.contains("shine")
-                        || q.contains("dark circle")
-                        || q.contains("eye bag")
-                        || q.contains("wrinkle")
-                        || q.contains("glamour")
-                        || q.contains("beauty")
-                        || q.contains("editorial")
-                        || q.contains("natural")
-                        || q.contains("male");
-
-                    let mut r = if q.is_empty() || (!dd.retouch.is_active() && mentions_retouch) {
-                        analysis.recommended.clone()
-                    } else {
-                        dd.retouch.clone()
-                    };
-
-                    // Apply natural-language prompt intent across all image controls:
-                    if !q.is_empty() {
+                    // Only run local keyword heuristics when no structured AI JSON response was provided:
+                    if parsed_ai.is_none() && !q.is_empty() {
                         if q.contains("reset") || q.contains("original") || q.contains("clear all") {
                             dd = lightcraft_develop::DevelopSettings::default();
                             r = lightcraft_develop::Retouch::default();
@@ -1131,7 +1216,7 @@ pub fn specs() -> Vec<CommandSpec> {
                             r.lip_enhance = (r.lip_enhance + 18.0).clamp(25.0, 65.0);
                             r.lip_moisture = (r.lip_moisture + 22.0).clamp(30.0, 75.0);
                         }
-                        if q.contains("slim") || q.contains("jaw") || q.contains("sculpt") || q.contains("contour") {
+                        if q.contains("jaw") || q.contains("sculpt") || q.contains("contour") || q.contains("slim face") || q.contains("face slim") {
                             r.face_contour = (r.face_contour + 20.0).clamp(40.0, 80.0);
                             r.face_slim = (r.face_slim + 18.0).clamp(20.0, 60.0);
                         }
@@ -1181,14 +1266,13 @@ pub fn specs() -> Vec<CommandSpec> {
                         if q.contains("nose") {
                             r.nose_slim = (r.nose_slim + 18.0).clamp(20.0, 55.0);
                         }
-                        if q.contains("chin") {
+                        if q.contains("chin") && !q.contains("double chin") {
                             r.chin_length = -18.0;
                         }
                         if q.contains("hair") || q.contains("flyaway") || q.contains("stray") {
                             r.hair_luster = (r.hair_luster + 22.0).clamp(35.0, 75.0);
                             r.stray_hair = (r.stray_hair + 26.0).clamp(40.0, 85.0);
                         }
-                        // Global Light / Tone / Color / Grading / Effects / Crop controls from chat:
                         if q.contains("auto tone") || q.contains("balance exposure") {
                             dd.light.exposure = (dd.light.exposure + 0.25).clamp(-4.0, 4.0);
                             dd.light.highlights = -24.0;
@@ -1261,7 +1345,6 @@ pub fn specs() -> Vec<CommandSpec> {
                         if q.contains("grain") {
                             dd.grain.amount = (dd.grain.amount + 22.0).clamp(0.0, 100.0);
                         }
-                        // Crop aspect ratios & orientation from chat:
                         let crop_aspect: Option<(u32, u32)> = if q.contains("1:1") || q.contains("1x1") || q.contains("square") {
                             Some((100, 100))
                         } else if q.contains("4:5") || q.contains("4x5") || q.contains("5:4") || q.contains("5x4") {
@@ -1299,46 +1382,51 @@ pub fn specs() -> Vec<CommandSpec> {
                         }
                     }
 
-                    // If AI Vision returned structured JSON overrides, apply them with safe clamping:
+                    // If AI Vision returned structured JSON overrides, apply ONLY the fields present:
                     if let Some(ai) = &parsed_ai {
-                        let ret_obj = ai.get("retouch").unwrap_or(ai);
+                        if actions.iter().any(|a| a == "reset") {
+                            dd = lightcraft_develop::DevelopSettings::default();
+                            r = lightcraft_develop::Retouch::default();
+                        }
                         let num = |obj: &Value, k1: &str, k2: &str| -> Option<f64> {
                             obj.get(k1).or_else(|| obj.get(k2)).and_then(Value::as_f64).filter(|v| v.is_finite())
                         };
-                        if let Some(v) = num(ret_obj, "skinSmooth", "skin_smooth") { r.skin_smooth = v.clamp(0.0, 100.0); }
-                        if let Some(v) = num(ret_obj, "skinTexture", "skin_texture") { r.skin_texture = v.clamp(0.0, 100.0); }
-                        if let Some(v) = num(ret_obj, "skinToneEven", "skin_tone_even") { r.skin_tone_even = v.clamp(0.0, 100.0); }
-                        if let Some(v) = num(ret_obj, "shineControl", "shine_control") { r.shine_control = v.clamp(0.0, 100.0); }
-                        if let Some(v) = num(ret_obj, "darkCircles", "dark_circles") { r.dark_circles = v.clamp(0.0, 100.0); }
-                        if let Some(v) = num(ret_obj, "wrinkleReduce", "wrinkle_reduce") { r.wrinkle_reduce = v.clamp(0.0, 100.0); }
-                        if let Some(v) = num(ret_obj, "skinRadiance", "skin_radiance") { r.skin_radiance = v.clamp(-100.0, 100.0); }
-                        if let Some(v) = num(ret_obj, "skinWarmth", "skin_warmth") { r.skin_warmth = v.clamp(-100.0, 100.0); }
-                        if let Some(v) = num(ret_obj, "skinRedness", "skin_redness") { r.skin_redness = v.clamp(-100.0, 100.0); }
-                        if let Some(v) = num(ret_obj, "eyeBrighten", "eye_brighten") { r.eye_brighten = v.clamp(0.0, 100.0); }
-                        if let Some(v) = num(ret_obj, "eyeWhiten", "eye_whiten") { r.eye_whiten = v.clamp(0.0, 100.0); }
-                        if let Some(v) = num(ret_obj, "eyeClarity", "eye_clarity") { r.eye_clarity = v.clamp(0.0, 100.0); }
-                        if let Some(v) = num(ret_obj, "eyebrowEnhance", "eyebrow_enhance") { r.eyebrow_enhance = v.clamp(-100.0, 100.0); }
-                        if let Some(v) = num(ret_obj, "teethWhiten", "teeth_whiten") { r.teeth_whiten = v.clamp(0.0, 100.0); }
-                        if let Some(v) = num(ret_obj, "lipEnhance", "lip_enhance") { r.lip_enhance = v.clamp(-100.0, 100.0); }
-                        if let Some(v) = num(ret_obj, "lipMoisture", "lip_moisture") { r.lip_moisture = v.clamp(0.0, 100.0); }
-                        if let Some(v) = num(ret_obj, "faceContour", "face_contour") { r.face_contour = v.clamp(0.0, 100.0); }
-                        if let Some(v) = num(ret_obj, "faceSlim", "face_slim") { r.face_slim = v.clamp(-100.0, 100.0); }
-                        if let Some(v) = num(ret_obj, "eyeEnlarge", "eye_enlarge") { r.eye_enlarge = v.clamp(-100.0, 100.0); }
-                        if let Some(v) = num(ret_obj, "noseSlim", "nose_slim") { r.nose_slim = v.clamp(-100.0, 100.0); }
-                        if let Some(v) = num(ret_obj, "chinLength", "chin_length") { r.chin_length = v.clamp(-100.0, 100.0); }
-                        if let Some(v) = num(ret_obj, "smileLift", "smile_lift") { r.smile_lift = v.clamp(-100.0, 100.0); }
-                        if let Some(v) = num(ret_obj, "bodySlim", "body_slim") { r.body_slim = v.clamp(-100.0, 100.0); }
-                        if let Some(v) = num(ret_obj, "waistSlim", "waist_slim") { r.waist_slim = v.clamp(-100.0, 100.0); }
-                        if let Some(v) = num(ret_obj, "stomachFlat", "stomach_flat") { r.stomach_flat = v.clamp(0.0, 100.0); }
-                        if let Some(v) = num(ret_obj, "hipEnhance", "hip_enhance") { r.hip_enhance = v.clamp(-100.0, 100.0); }
-                        if let Some(v) = num(ret_obj, "shoulderWidth", "shoulder_width") { r.shoulder_width = v.clamp(-100.0, 100.0); }
-                        if let Some(v) = num(ret_obj, "armSlim", "arm_slim") { r.arm_slim = v.clamp(-100.0, 100.0); }
-                        if let Some(v) = num(ret_obj, "neckSlim", "neck_slim") { r.neck_slim = v.clamp(-100.0, 100.0); }
-                        if let Some(v) = num(ret_obj, "chestEnhance", "chest_enhance") { r.chest_enhance = v.clamp(-100.0, 100.0); }
-                        if let Some(v) = num(ret_obj, "legLength", "leg_length") { r.leg_length = v.clamp(-100.0, 100.0); }
-                        if let Some(v) = num(ret_obj, "hairLuster", "hair_luster") { r.hair_luster = v.clamp(0.0, 100.0); }
-                        if let Some(v) = num(ret_obj, "strayHair", "stray_hair") { r.stray_hair = v.clamp(0.0, 100.0); }
-                        if let Some(v) = num(ret_obj, "blemishSensitivity", "blemish_sensitivity") { r.blemish_sensitivity = v.clamp(0.0, 100.0); }
+                        if let Some(ret_obj) = ai.get("retouch").or(Some(ai)) {
+                            if let Some(v) = num(ret_obj, "skinSmooth", "skin_smooth") { r.skin_smooth = v.clamp(0.0, 100.0); }
+                            if let Some(v) = num(ret_obj, "skinTexture", "skin_texture") { r.skin_texture = v.clamp(0.0, 100.0); }
+                            if let Some(v) = num(ret_obj, "skinToneEven", "skin_tone_even") { r.skin_tone_even = v.clamp(0.0, 100.0); }
+                            if let Some(v) = num(ret_obj, "shineControl", "shine_control") { r.shine_control = v.clamp(0.0, 100.0); }
+                            if let Some(v) = num(ret_obj, "darkCircles", "dark_circles") { r.dark_circles = v.clamp(0.0, 100.0); }
+                            if let Some(v) = num(ret_obj, "wrinkleReduce", "wrinkle_reduce") { r.wrinkle_reduce = v.clamp(0.0, 100.0); }
+                            if let Some(v) = num(ret_obj, "skinRadiance", "skin_radiance") { r.skin_radiance = v.clamp(-100.0, 100.0); }
+                            if let Some(v) = num(ret_obj, "skinWarmth", "skin_warmth") { r.skin_warmth = v.clamp(-100.0, 100.0); }
+                            if let Some(v) = num(ret_obj, "skinRedness", "skin_redness") { r.skin_redness = v.clamp(-100.0, 100.0); }
+                            if let Some(v) = num(ret_obj, "eyeBrighten", "eye_brighten") { r.eye_brighten = v.clamp(0.0, 100.0); }
+                            if let Some(v) = num(ret_obj, "eyeWhiten", "eye_whiten") { r.eye_whiten = v.clamp(0.0, 100.0); }
+                            if let Some(v) = num(ret_obj, "eyeClarity", "eye_clarity") { r.eye_clarity = v.clamp(0.0, 100.0); }
+                            if let Some(v) = num(ret_obj, "eyebrowEnhance", "eyebrow_enhance") { r.eyebrow_enhance = v.clamp(-100.0, 100.0); }
+                            if let Some(v) = num(ret_obj, "teethWhiten", "teeth_whiten") { r.teeth_whiten = v.clamp(0.0, 100.0); }
+                            if let Some(v) = num(ret_obj, "lipEnhance", "lip_enhance") { r.lip_enhance = v.clamp(-100.0, 100.0); }
+                            if let Some(v) = num(ret_obj, "lipMoisture", "lip_moisture") { r.lip_moisture = v.clamp(0.0, 100.0); }
+                            if let Some(v) = num(ret_obj, "faceContour", "face_contour") { r.face_contour = v.clamp(0.0, 100.0); }
+                            if let Some(v) = num(ret_obj, "faceSlim", "face_slim") { r.face_slim = v.clamp(-100.0, 100.0); }
+                            if let Some(v) = num(ret_obj, "eyeEnlarge", "eye_enlarge") { r.eye_enlarge = v.clamp(-100.0, 100.0); }
+                            if let Some(v) = num(ret_obj, "noseSlim", "nose_slim") { r.nose_slim = v.clamp(-100.0, 100.0); }
+                            if let Some(v) = num(ret_obj, "chinLength", "chin_length") { r.chin_length = v.clamp(-100.0, 100.0); }
+                            if let Some(v) = num(ret_obj, "smileLift", "smile_lift") { r.smile_lift = v.clamp(-100.0, 100.0); }
+                            if let Some(v) = num(ret_obj, "bodySlim", "body_slim") { r.body_slim = v.clamp(-100.0, 100.0); }
+                            if let Some(v) = num(ret_obj, "waistSlim", "waist_slim") { r.waist_slim = v.clamp(-100.0, 100.0); }
+                            if let Some(v) = num(ret_obj, "stomachFlat", "stomach_flat") { r.stomach_flat = v.clamp(0.0, 100.0); }
+                            if let Some(v) = num(ret_obj, "hipEnhance", "hip_enhance") { r.hip_enhance = v.clamp(-100.0, 100.0); }
+                            if let Some(v) = num(ret_obj, "shoulderWidth", "shoulder_width") { r.shoulder_width = v.clamp(-100.0, 100.0); }
+                            if let Some(v) = num(ret_obj, "armSlim", "arm_slim") { r.arm_slim = v.clamp(-100.0, 100.0); }
+                            if let Some(v) = num(ret_obj, "neckSlim", "neck_slim") { r.neck_slim = v.clamp(-100.0, 100.0); }
+                            if let Some(v) = num(ret_obj, "chestEnhance", "chest_enhance") { r.chest_enhance = v.clamp(-100.0, 100.0); }
+                            if let Some(v) = num(ret_obj, "legLength", "leg_length") { r.leg_length = v.clamp(-100.0, 100.0); }
+                            if let Some(v) = num(ret_obj, "hairLuster", "hair_luster") { r.hair_luster = v.clamp(0.0, 100.0); }
+                            if let Some(v) = num(ret_obj, "strayHair", "stray_hair") { r.stray_hair = v.clamp(0.0, 100.0); }
+                            if let Some(v) = num(ret_obj, "blemishSensitivity", "blemish_sensitivity") { r.blemish_sensitivity = v.clamp(0.0, 100.0); }
+                        }
 
                         let light_obj = ai.get("light").unwrap_or(ai);
                         if let Some(v) = num(light_obj, "exposure", "exposure") { dd.light.exposure = v.clamp(-5.0, 5.0); }
@@ -1350,21 +1438,54 @@ pub fn specs() -> Vec<CommandSpec> {
 
                         let wb_obj = ai.get("wb").unwrap_or(ai);
                         if let Some(v) = num(wb_obj, "temp", "temperature") {
-                            if v.abs() > 1e-4 {
-                                dd.wb.temp = if v >= 1500.0 { v.clamp(2000.0, 50000.0) } else { rel_to_k(v) };
-                                dd.wb.mode = lightcraft_develop::WbMode::Custom;
-                            }
+                            dd.wb.temp = if v >= 1500.0 { v.clamp(2000.0, 50000.0) } else { rel_to_k(v) };
+                            dd.wb.mode = lightcraft_develop::WbMode::Custom;
                         }
                         if let Some(v) = num(wb_obj, "tint", "tint") {
-                            if v.abs() > 1e-4 {
-                                dd.wb.tint = v.clamp(-150.0, 150.0);
-                                dd.wb.mode = lightcraft_develop::WbMode::Custom;
-                            }
+                            dd.wb.tint = v.clamp(-150.0, 150.0);
+                            dd.wb.mode = lightcraft_develop::WbMode::Custom;
                         }
 
                         let color_obj = ai.get("color").unwrap_or(ai);
                         if let Some(v) = num(color_obj, "vibrance", "vibrance") { dd.color.vibrance = v.clamp(-100.0, 100.0); }
                         if let Some(v) = num(color_obj, "saturation", "saturation") { dd.color.saturation = v.clamp(-100.0, 100.0); }
+
+                        if let Some(gr) = ai.get("grading") {
+                            let apply_wheel = |w: &mut lightcraft_develop::Wheel, src: &Value| {
+                                if let Some(h) = num(src, "hue", "h") { w.hue = h.rem_euclid(360.0); }
+                                if let Some(s) = num(src, "sat", "saturation") { w.sat = s.clamp(0.0, 100.0); }
+                                if let Some(l) = num(src, "lum", "luminance") { w.lum = l.clamp(-100.0, 100.0); }
+                            };
+                            if let Some(sh) = gr.get("shadows") { apply_wheel(&mut dd.grading.shadows, sh); }
+                            if let Some(mid) = gr.get("midtones") { apply_wheel(&mut dd.grading.midtones, mid); }
+                            if let Some(hi) = gr.get("highlights") { apply_wheel(&mut dd.grading.highlights, hi); }
+                            if let Some(gl) = gr.get("global") { apply_wheel(&mut dd.grading.global, gl); }
+                            if let Some(h) = num(gr, "shadowsHue", "shadows_hue") { dd.grading.shadows.hue = h.rem_euclid(360.0); }
+                            if let Some(s) = num(gr, "shadowsSat", "shadows_sat") { dd.grading.shadows.sat = s.clamp(0.0, 100.0); }
+                            if let Some(l) = num(gr, "shadowsLum", "shadows_lum") { dd.grading.shadows.lum = l.clamp(-100.0, 100.0); }
+                            if let Some(h) = num(gr, "midtonesHue", "midtones_hue") { dd.grading.midtones.hue = h.rem_euclid(360.0); }
+                            if let Some(s) = num(gr, "midtonesSat", "midtones_sat") { dd.grading.midtones.sat = s.clamp(0.0, 100.0); }
+                            if let Some(l) = num(gr, "midtonesLum", "midtones_lum") { dd.grading.midtones.lum = l.clamp(-100.0, 100.0); }
+                            if let Some(h) = num(gr, "highlightsHue", "highlights_hue") { dd.grading.highlights.hue = h.rem_euclid(360.0); }
+                            if let Some(s) = num(gr, "highlightsSat", "highlights_sat") { dd.grading.highlights.sat = s.clamp(0.0, 100.0); }
+                            if let Some(l) = num(gr, "highlightsLum", "highlights_lum") { dd.grading.highlights.lum = l.clamp(-100.0, 100.0); }
+                        }
+
+                        if let Some(mx) = ai.get("mixer") {
+                            let apply_band = |b: &mut lightcraft_develop::Hsl, src: &Value| {
+                                if let Some(h) = num(src, "hue", "h") { b.hue = h.clamp(-100.0, 100.0); }
+                                if let Some(s) = num(src, "sat", "saturation") { b.sat = s.clamp(-100.0, 100.0); }
+                                if let Some(l) = num(src, "lum", "luminance") { b.lum = l.clamp(-100.0, 100.0); }
+                            };
+                            if let Some(v) = mx.get("red") { apply_band(&mut dd.mixer.red, v); }
+                            if let Some(v) = mx.get("orange") { apply_band(&mut dd.mixer.orange, v); }
+                            if let Some(v) = mx.get("yellow") { apply_band(&mut dd.mixer.yellow, v); }
+                            if let Some(v) = mx.get("green") { apply_band(&mut dd.mixer.green, v); }
+                            if let Some(v) = mx.get("aqua") { apply_band(&mut dd.mixer.aqua, v); }
+                            if let Some(v) = mx.get("blue") { apply_band(&mut dd.mixer.blue, v); }
+                            if let Some(v) = mx.get("purple") { apply_band(&mut dd.mixer.purple, v); }
+                            if let Some(v) = mx.get("magenta") { apply_band(&mut dd.mixer.magenta, v); }
+                        }
 
                         let effects_obj = ai.get("effects").unwrap_or(ai);
                         if let Some(v) = num(effects_obj, "texture", "texture") { dd.effects.texture = v.clamp(-100.0, 100.0); }
@@ -1376,6 +1497,50 @@ pub fn specs() -> Vec<CommandSpec> {
                         let detail_obj = ai.get("detail").unwrap_or(ai);
                         if let Some(v) = num(detail_obj, "sharpness", "sharpenAmount") { dd.detail.sharpen_amount = v.clamp(0.0, 150.0); }
                         if let Some(v) = num(detail_obj, "nrLuminance", "noise") { dd.detail.nr_luminance = v.clamp(0.0, 100.0); }
+                        if let Some(v) = num(detail_obj, "nrColor", "colorNoise") { dd.detail.nr_color = v.clamp(0.0, 100.0); }
+
+                        if let Some(cr) = ai.get("crop") {
+                            if let Some(asp) = cr.get("aspect").and_then(Value::as_str) {
+                                let pair = match asp.trim().to_ascii_lowercase().as_str() {
+                                    "1:1" | "1x1" | "square" => Some((100u32, 100u32)),
+                                    "4:5" | "4x5" | "5:4" | "5x4" => Some((400, 500)),
+                                    "16:9" | "16x9" => Some((1600, 900)),
+                                    "9:16" | "9x16" => Some((900, 1600)),
+                                    "3:2" | "3x2" => Some((300, 200)),
+                                    "5:7" | "5x7" => Some((500, 700)),
+                                    "original" | "free" | "none" => {
+                                        dd.crop.aspect = None;
+                                        None
+                                    }
+                                    _ => None,
+                                };
+                                if let Some((aw, ah)) = pair {
+                                    let ph = s.catalog.photo(id);
+                                    let (mut pw, mut ph_h) = ph.map(|p| (p.width.max(1) as f64, p.height.max(1) as f64)).unwrap_or((3.0, 2.0));
+                                    if dd.orientation.swaps_axes() {
+                                        std::mem::swap(&mut pw, &mut ph_h);
+                                    }
+                                    dd.crop.aspect = Some((aw, ah));
+                                    let ratio = if (pw >= ph_h) == (aw >= ah) {
+                                        aw as f64 / ah as f64
+                                    } else {
+                                        ah as f64 / aw as f64
+                                    };
+                                    dd.crop.geometry = lightcraft_geom::crop_fit_angle(pw, ph_h, dd.crop.geometry.angle, Some(ratio));
+                                }
+                            }
+                            if let Some(ang) = num(cr, "angle", "straighten") {
+                                let ph = s.catalog.photo(id);
+                                let (mut pw, mut ph_h) = ph.map(|p| (p.width.max(1) as f64, p.height.max(1) as f64)).unwrap_or((3.0, 2.0));
+                                if dd.orientation.swaps_axes() {
+                                    std::mem::swap(&mut pw, &mut ph_h);
+                                }
+                                let ratio = dd.crop.aspect.map(|(aw, ah)| aw as f64 / ah as f64);
+                                dd.crop.geometry = lightcraft_geom::crop_fit_angle(pw, ph_h, ang.clamp(-45.0, 45.0), ratio);
+                            }
+                            if let Some(fh) = cr.get("flipH").and_then(Value::as_bool) { dd.crop.flip_h = fh; }
+                            if let Some(fv) = cr.get("flipV").and_then(Value::as_bool) { dd.crop.flip_v = fv; }
+                        }
 
                         if let Some(tr) = ai.get("treatment").and_then(Value::as_str) {
                             if tr.eq_ignore_ascii_case("bw") || tr.eq_ignore_ascii_case("monochrome") {
@@ -1384,32 +1549,40 @@ pub fn specs() -> Vec<CommandSpec> {
                                 dd.treatment = lightcraft_develop::Treatment::Color;
                             }
                         }
-
-                        if let Some(s_txt) = ai.get("summary").and_then(Value::as_str).filter(|s| !s.trim().is_empty()) {
-                            summary = s_txt.trim().to_string();
-                        }
-                    }
-
-                    if summary.is_empty() {
-                        summary = format!(
-                            "Applied AI edits: Smooth {:.0} · Even {:.0} · Shine {:.0} · Dark Circles {:.0} · Exp {:+.2}",
-                            r.skin_smooth, r.skin_tone_even, r.shine_control, r.dark_circles, dd.light.exposure
-                        );
                     }
 
                     dd.retouch = r;
-                    if let Some(op) = s.develop_op(id, dd, "AI Retouch Director") {
+
+                    if id == active_id {
+                        diff_notes = describe_develop_diff(&prev_dd, &dd);
+                    }
+
+                    if dd != prev_dd
+                        && let Some(op) = s.develop_op(id, dd, "AI Studio Assistant")
+                    {
                         ops.push(op);
                     }
                 }
 
                 let changed = ops.len();
                 if !ops.is_empty() {
-                    s.commit("AI Retouch Director", lightcraft_catalog::Op::Batch { ops })?;
+                    s.commit("AI Studio Assistant", lightcraft_catalog::Op::Batch { ops })?;
                 }
+
+                if summary.is_empty() {
+                    if !diff_notes.is_empty() {
+                        summary = format!("Adjusted {}.", diff_notes.join(" · "));
+                    } else {
+                        summary = "Ready — tell me what you'd like to adjust or ask anything about the photo.".to_string();
+                    }
+                } else if !diff_notes.is_empty() {
+                    summary = format!("{summary}\n\n✓ {}", diff_notes.join(" · "));
+                }
+
                 Ok(json!({
                     "changed": changed,
                     "summary": summary,
+                    "diff": diff_notes,
                     "neural": any_neural,
                 }))
             }
@@ -1702,5 +1875,87 @@ fn encode_base64(bytes: &[u8]) -> String {
             out.push('=');
         }
     }
+    out
+}
+
+fn describe_develop_diff(prev: &lightcraft_develop::DevelopSettings, next: &lightcraft_develop::DevelopSettings) -> Vec<String> {
+    let mut out = Vec::new();
+    fn chk(out: &mut Vec<String>, label: &str, a: f64, b: f64, signed: bool) {
+        if (b - a).abs() >= 0.5 {
+            if signed {
+                out.push(format!("{label} {:+.0}", b));
+            } else {
+                out.push(format!("{label} {:.0}", b));
+            }
+        }
+    }
+    if (next.light.exposure - prev.light.exposure).abs() >= 0.02 {
+        out.push(format!("Exposure {:+.2}", next.light.exposure));
+    }
+    chk(&mut out, "Contrast", prev.light.contrast, next.light.contrast, true);
+    chk(&mut out, "Highlights", prev.light.highlights, next.light.highlights, true);
+    chk(&mut out, "Shadows", prev.light.shadows, next.light.shadows, true);
+    chk(&mut out, "Whites", prev.light.whites, next.light.whites, true);
+    chk(&mut out, "Blacks", prev.light.blacks, next.light.blacks, true);
+    if (next.wb.temp - prev.wb.temp).abs() >= 25.0 {
+        out.push(format!("Temp {:.0}K", next.wb.temp));
+    }
+    chk(&mut out, "Tint", prev.wb.tint, next.wb.tint, true);
+    chk(&mut out, "Vibrance", prev.color.vibrance, next.color.vibrance, true);
+    chk(&mut out, "Saturation", prev.color.saturation, next.color.saturation, true);
+    chk(&mut out, "Texture", prev.effects.texture, next.effects.texture, true);
+    chk(&mut out, "Clarity", prev.effects.clarity, next.effects.clarity, true);
+    chk(&mut out, "Dehaze", prev.effects.dehaze, next.effects.dehaze, true);
+    chk(&mut out, "Vignette", prev.vignette.amount, next.vignette.amount, true);
+    chk(&mut out, "Grain", prev.grain.amount, next.grain.amount, false);
+    chk(&mut out, "Sharpness", prev.detail.sharpen_amount, next.detail.sharpen_amount, false);
+    chk(&mut out, "Denoise", prev.detail.nr_luminance, next.detail.nr_luminance, false);
+    if next.treatment != prev.treatment {
+        out.push(match next.treatment {
+            lightcraft_develop::Treatment::Bw => "B&W".to_string(),
+            lightcraft_develop::Treatment::Color => "Color".to_string(),
+        });
+    }
+    let pr = &prev.retouch;
+    let nr = &next.retouch;
+    chk(&mut out, "Skin Smooth", pr.skin_smooth, nr.skin_smooth, false);
+    chk(&mut out, "Skin Texture", pr.skin_texture, nr.skin_texture, false);
+    chk(&mut out, "Even Tone", pr.skin_tone_even, nr.skin_tone_even, false);
+    chk(&mut out, "Shine Control", pr.shine_control, nr.shine_control, false);
+    chk(&mut out, "Dark Circles", pr.dark_circles, nr.dark_circles, false);
+    chk(&mut out, "Wrinkles", pr.wrinkle_reduce, nr.wrinkle_reduce, false);
+    chk(&mut out, "Skin Radiance", pr.skin_radiance, nr.skin_radiance, true);
+    chk(&mut out, "Skin Warmth", pr.skin_warmth, nr.skin_warmth, true);
+    chk(&mut out, "Skin Redness", pr.skin_redness, nr.skin_redness, true);
+    chk(&mut out, "Eye Brighten", pr.eye_brighten, nr.eye_brighten, false);
+    chk(&mut out, "Eye Whiten", pr.eye_whiten, nr.eye_whiten, false);
+    chk(&mut out, "Eye Clarity", pr.eye_clarity, nr.eye_clarity, false);
+    chk(&mut out, "Eyebrows", pr.eyebrow_enhance, nr.eyebrow_enhance, true);
+    chk(&mut out, "Teeth Whiten", pr.teeth_whiten, nr.teeth_whiten, false);
+    chk(&mut out, "Lips", pr.lip_enhance, nr.lip_enhance, true);
+    chk(&mut out, "Lip Moisture", pr.lip_moisture, nr.lip_moisture, false);
+    chk(&mut out, "Face Sculpt", pr.face_contour, nr.face_contour, false);
+    chk(&mut out, "Face Slim", pr.face_slim, nr.face_slim, true);
+    chk(&mut out, "Eye Size", pr.eye_enlarge, nr.eye_enlarge, true);
+    chk(&mut out, "Nose Slim", pr.nose_slim, nr.nose_slim, true);
+    chk(&mut out, "Chin", pr.chin_length, nr.chin_length, true);
+    chk(&mut out, "Smile Lift", pr.smile_lift, nr.smile_lift, true);
+    chk(&mut out, "Body Slim", pr.body_slim, nr.body_slim, true);
+    chk(&mut out, "Waist Slim", pr.waist_slim, nr.waist_slim, true);
+    chk(&mut out, "Stomach Flat", pr.stomach_flat, nr.stomach_flat, false);
+    chk(&mut out, "Hips", pr.hip_enhance, nr.hip_enhance, true);
+    chk(&mut out, "Shoulders", pr.shoulder_width, nr.shoulder_width, true);
+    chk(&mut out, "Arm Slim", pr.arm_slim, nr.arm_slim, true);
+    chk(&mut out, "Neck Slim", pr.neck_slim, nr.neck_slim, true);
+    chk(&mut out, "Chest", pr.chest_enhance, nr.chest_enhance, true);
+    chk(&mut out, "Leg Length", pr.leg_length, nr.leg_length, true);
+    chk(&mut out, "Hair Luster", pr.hair_luster, nr.hair_luster, false);
+    chk(&mut out, "Stray Hair", pr.stray_hair, nr.stray_hair, false);
+    if next.crop.aspect != prev.crop.aspect
+        && let Some((w, h)) = next.crop.aspect
+    {
+        out.push(format!("Crop {w}:{h}"));
+    }
+    out.truncate(8);
     out
 }
