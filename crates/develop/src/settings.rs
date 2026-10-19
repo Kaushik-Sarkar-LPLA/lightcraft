@@ -1205,6 +1205,9 @@ impl DevelopSettings {
 /// - **Mouth, Teeth & Lips**: teeth whitening & yellow-cast removal, lip tint/saturation, and lip gloss/moisture.
 /// - **Face Sculpt & Reshaping**: 3D dodge & burn facial contouring plus 2D mesh-warp reshaping
 ///   (face/jawline slimming, eye enlargement, nose slimming, chin length, smile lift).
+/// - **Body Reshape & Sculpt**: full-body 2D inverse mesh warps and 3D contour toning
+///   (overall body slimming, waist/stomach slimming, stomach flatten/tummy tuck, hips & S-curve,
+///   shoulder width/posture, arm slimming, neck & collarbone sculpt, chest/bust enhance, leg length & slim).
 /// - **Hair & Flyaways**: hair shineband luster and stray-hair/flyaway attenuation.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
@@ -1253,6 +1256,24 @@ pub struct Retouch {
     pub chin_length: f64,
     /// Mouth corner / smile lift warp (-100..100, default 0).
     pub smile_lift: f64,
+    /// Overall body & torso silhouette slimming warp (-100..100, default 0).
+    pub body_slim: f64,
+    /// Waist & lateral stomach cinching warp (-100..100, default 0).
+    pub waist_slim: f64,
+    /// Stomach flatten / tummy-tuck 2D warp & 3D bulge attenuation (0..100, default 0).
+    pub stomach_flat: f64,
+    /// Hip & S-curve hourglass enhancement or hip slimming (-100..100, default 0).
+    pub hip_enhance: f64,
+    /// Shoulder width & posture adjustment (-100..100, default 0).
+    pub shoulder_width: f64,
+    /// Upper & lower arm slimming warp (-100..100, default 0).
+    pub arm_slim: f64,
+    /// Neck slimming & lengthening + 3D collarbone sculpt (-100..100, default 0).
+    pub neck_slim: f64,
+    /// Chest / bust fullness warp & 3D contour (-100..100, default 0).
+    pub chest_enhance: f64,
+    /// Leg lengthening / height proportion stretch & thigh slimming (-100..100, default 0).
+    pub leg_length: f64,
     /// Hair shineband luster & strand clarity (0..100, default 0).
     pub hair_luster: f64,
     /// Stray hair & flyaway reduction (0..100, default 0).
@@ -1286,6 +1307,15 @@ impl Default for Retouch {
             nose_slim: 0.0,
             chin_length: 0.0,
             smile_lift: 0.0,
+            body_slim: 0.0,
+            waist_slim: 0.0,
+            stomach_flat: 0.0,
+            hip_enhance: 0.0,
+            shoulder_width: 0.0,
+            arm_slim: 0.0,
+            neck_slim: 0.0,
+            chest_enhance: 0.0,
+            leg_length: 0.0,
             hair_luster: 0.0,
             stray_hair: 0.0,
             blemish_sensitivity: 50.0,
@@ -1299,10 +1329,24 @@ impl Retouch {
         *self == Retouch::default()
     }
 
-    /// Whether any 2D facial reshaping / liquify slider is active (`!= 0`).
+    /// Whether any 2D facial or body reshaping / liquify slider is active (`!= 0`).
     pub fn has_reshape(&self) -> bool {
         let nz = |v: f64| v.is_finite() && v.abs() > 1e-4;
-        nz(self.face_slim) || nz(self.eye_enlarge) || nz(self.nose_slim) || nz(self.chin_length) || nz(self.smile_lift)
+        let pos = |v: f64| v.is_finite() && v > 1e-4;
+        nz(self.face_slim)
+            || nz(self.eye_enlarge)
+            || nz(self.nose_slim)
+            || nz(self.chin_length)
+            || nz(self.smile_lift)
+            || nz(self.body_slim)
+            || nz(self.waist_slim)
+            || pos(self.stomach_flat)
+            || nz(self.hip_enhance)
+            || nz(self.shoulder_width)
+            || nz(self.arm_slim)
+            || nz(self.neck_slim)
+            || nz(self.chest_enhance)
+            || nz(self.leg_length)
     }
 
     /// Whether any pixel-affecting retouch slider is active.
@@ -1331,7 +1375,7 @@ impl Retouch {
     }
 
     /// Bit pattern of all pixel-affecting retouch parameters for stage cache keying.
-    pub fn cache_bits(&self) -> [u64; 24] {
+    pub fn cache_bits(&self) -> [u64; 33] {
         [
             self.skin_smooth,
             self.skin_texture,
@@ -1355,6 +1399,15 @@ impl Retouch {
             self.nose_slim,
             self.chin_length,
             self.smile_lift,
+            self.body_slim,
+            self.waist_slim,
+            self.stomach_flat,
+            self.hip_enhance,
+            self.shoulder_width,
+            self.arm_slim,
+            self.neck_slim,
+            self.chest_enhance,
+            self.leg_length,
             self.hair_luster,
             self.stray_hair,
         ]

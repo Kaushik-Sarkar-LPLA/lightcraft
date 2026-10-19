@@ -417,6 +417,7 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
                     ("evotoPresetEditorial", "lc.evoto-editorial", "Editorial", "High-end frequency separation retaining pore texture with 3D contour"),
                     ("evotoPresetGlamour", "lc.evoto-glamour", "Glamour", "Full beauty retouch, radiant skin, glossy lips, and subtle facial reshape"),
                     ("evotoPresetMale", "lc.evoto-male", "Male", "High-texture skin cleanup, shine & redness reduction, and crisp eyes"),
+                    ("evotoPresetBody", "lc.evoto-body", "Body Slim", "Overall body slimming, stomach flatten, waist cinch, arm slimming, and leg lengthening"),
                 ] {
                     if text_button(ui, btn_id, crate::i18n::tr(label), false).on_hover_text(crate::i18n::tr(tip)).clicked()
                         && let Err(e) = app.run("preset.apply", json!({"id": preset_id}))
@@ -469,6 +470,17 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
         control(app, ui, d, "retouch.noseSlim", true);
         control(app, ui, d, "retouch.chinLength", true);
         control(app, ui, d, "retouch.smileLift", true);
+
+        sub_title(ui, crate::i18n::tr("Body Reshape & Sculpt (AI)"));
+        control(app, ui, d, "retouch.bodySlim", true);
+        control(app, ui, d, "retouch.waistSlim", true);
+        control(app, ui, d, "retouch.stomachFlat", true);
+        control(app, ui, d, "retouch.hipEnhance", true);
+        control(app, ui, d, "retouch.shoulderWidth", true);
+        control(app, ui, d, "retouch.armSlim", true);
+        control(app, ui, d, "retouch.neckSlim", true);
+        control(app, ui, d, "retouch.chestEnhance", true);
+        control(app, ui, d, "retouch.legLength", true);
 
         sub_title(ui, crate::i18n::tr("Hair & Flyaways"));
         control(app, ui, d, "retouch.hairLuster", true);

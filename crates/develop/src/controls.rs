@@ -314,6 +314,15 @@ controls! {
     "retouch.noseSlim" => retouch.nose_slim, "Nose Slimming", Retouch, -100, 100, 0, 1, 0, Centered;
     "retouch.chinLength" => retouch.chin_length, "Chin Length", Retouch, -100, 100, 0, 1, 0, Centered;
     "retouch.smileLift" => retouch.smile_lift, "Smile Lift", Retouch, -100, 100, 0, 1, 0, Centered;
+    "retouch.bodySlim" => retouch.body_slim, "Body Slimming", Retouch, -100, 100, 0, 1, 0, Centered;
+    "retouch.waistSlim" => retouch.waist_slim, "Waist & Stomach Slim", Retouch, -100, 100, 0, 1, 0, Centered;
+    "retouch.stomachFlat" => retouch.stomach_flat, "Stomach Flatten", Retouch, 0, 100, 0, 1, 0, Plain;
+    "retouch.hipEnhance" => retouch.hip_enhance, "Hips & S-Curve", Retouch, -100, 100, 0, 1, 0, Centered;
+    "retouch.shoulderWidth" => retouch.shoulder_width, "Shoulder Width", Retouch, -100, 100, 0, 1, 0, Centered;
+    "retouch.armSlim" => retouch.arm_slim, "Arm Slimming", Retouch, -100, 100, 0, 1, 0, Centered;
+    "retouch.neckSlim" => retouch.neck_slim, "Neck & Collarbone", Retouch, -100, 100, 0, 1, 0, Centered;
+    "retouch.chestEnhance" => retouch.chest_enhance, "Chest & Bust", Retouch, -100, 100, 0, 1, 0, Centered;
+    "retouch.legLength" => retouch.leg_length, "Leg Length & Slim", Retouch, -100, 100, 0, 1, 0, Centered;
     "retouch.hairLuster" => retouch.hair_luster, "Hair Luster", Retouch, 0, 100, 0, 1, 0, Plain;
     "retouch.strayHair" => retouch.stray_hair, "Stray Hair Reduction", Retouch, 0, 100, 0, 1, 0, Plain;
     "retouch.blemishSensitivity" => retouch.blemish_sensitivity, "Blemish Sensitivity", Retouch, 0, 100, 50, 1, 0, Plain;

@@ -254,6 +254,7 @@ pub fn show(app: &mut LightcraftApp, ctx: &egui::Context) {
                 ui.spacing_mut().item_spacing = vec2(4.0, 4.0);
                 for (label, prompt_text) in [
                     ("✨ Auto-Retouch", ""),
+                    ("🧍 Body Slim", "Slim body, flatten stomach, cinch waist, slim arms, and lengthen legs"),
                     ("☀ Auto Tone", "Auto tone and balance exposure, highlights, and shadows"),
                     ("🔥 Warm Glow", "Warm golden hour skin tone and sunlit white balance"),
                     ("🎬 Cinematic", "Cinematic teal and orange color grade with subtle vignette"),

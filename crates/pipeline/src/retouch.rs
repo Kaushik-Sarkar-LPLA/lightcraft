@@ -580,6 +580,15 @@ pub fn analyze_portrait(img: &Rgb32f) -> PortraitAnalysis {
         nose_slim: 8.0,
         chin_length: 0.0,
         smile_lift: 10.0,
+        body_slim: 0.0,
+        waist_slim: 0.0,
+        stomach_flat: 0.0,
+        hip_enhance: 0.0,
+        shoulder_width: 0.0,
+        arm_slim: 0.0,
+        neck_slim: 0.0,
+        chest_enhance: 0.0,
+        leg_length: 0.0,
         hair_luster: 22.0,
         stray_hair: 24.0,
         blemish_sensitivity: 55.0,
@@ -630,8 +639,10 @@ fn clean_s11(v: f64) -> f32 {
     if v.is_finite() { (v / 100.0).clamp(-1.0, 1.0) as f32 } else { 0.0 }
 }
 
-/// Apply 2D C2-continuous inverse bilinear mesh warp for facial & feature reshaping
-/// (`face_slim`, `eye_enlarge`, `nose_slim`, `chin_length`, `smile_lift`).
+/// Apply 2D C2-continuous inverse bilinear mesh warp for facial & full-body reshaping
+/// (`face_slim`, `eye_enlarge`, `nose_slim`, `chin_length`, `smile_lift`, `body_slim`,
+/// `waist_slim`, `stomach_flat`, `hip_enhance`, `shoulder_width`, `arm_slim`, `neck_slim`,
+/// `chest_enhance`, `leg_length`).
 fn apply_reshape_warp(img: &mut Rgb32f, r: &Retouch, fz: &FaceZone) {
     let face_slim = clean_s11(r.face_slim);
     let eye_enlarge = clean_s11(r.eye_enlarge);
@@ -639,12 +650,32 @@ fn apply_reshape_warp(img: &mut Rgb32f, r: &Retouch, fz: &FaceZone) {
     let chin_length = clean_s11(r.chin_length);
     let smile_lift = clean_s11(r.smile_lift);
 
-    if face_slim.abs() <= 1e-4
-        && eye_enlarge.abs() <= 1e-4
-        && nose_slim.abs() <= 1e-4
-        && chin_length.abs() <= 1e-4
-        && smile_lift.abs() <= 1e-4
-    {
+    let body_slim = clean_s11(r.body_slim);
+    let waist_slim = clean_s11(r.waist_slim);
+    let stomach_flat = clean_u01(r.stomach_flat);
+    let hip_enhance = clean_s11(r.hip_enhance);
+    let shoulder_width = clean_s11(r.shoulder_width);
+    let arm_slim = clean_s11(r.arm_slim);
+    let neck_slim = clean_s11(r.neck_slim);
+    let chest_enhance = clean_s11(r.chest_enhance);
+    let leg_length = clean_s11(r.leg_length);
+
+    let has_face_warp = face_slim.abs() > 1e-4
+        || eye_enlarge.abs() > 1e-4
+        || nose_slim.abs() > 1e-4
+        || chin_length.abs() > 1e-4
+        || smile_lift.abs() > 1e-4;
+    let has_body_warp = body_slim.abs() > 1e-4
+        || waist_slim.abs() > 1e-4
+        || stomach_flat > 1e-4
+        || hip_enhance.abs() > 1e-4
+        || shoulder_width.abs() > 1e-4
+        || arm_slim.abs() > 1e-4
+        || neck_slim.abs() > 1e-4
+        || chest_enhance.abs() > 1e-4
+        || leg_length.abs() > 1e-4;
+
+    if !has_face_warp && !has_body_warp {
         return;
     }
 
@@ -690,67 +721,187 @@ fn apply_reshape_warp(img: &mut Rgb32f, r: &Retouch, fz: &FaceZone) {
     let smile_rx = (rx * 0.26).max(4.0);
     let smile_ry = (ry * 0.24).max(4.0);
 
+    // Anthropometric body proportions anchored below the detected face (adaptive to half-body, 3/4, or full-body shots).
+    let lower_span = (hf - cy).max(ry * 1.2);
+    let body_h = (2.0 * ry).min(lower_span * 0.24).max(ry * 0.75).max(8.0);
+    let body_rx = (rx * 2.15).clamp(wf * 0.16, wf * 0.44).max(8.0);
+    let neck_y = cy + 0.72 * body_h;
+    let shoulder_y = cy + 1.18 * body_h;
+    let chest_y = cy + 1.68 * body_h;
+    let arm_y = cy + 2.05 * body_h;
+    let waist_y = cy + 2.50 * body_h;
+    let hip_y = cy + 3.25 * body_h;
+    let leg_y0 = cy + 3.10 * body_h;
+
     for_rows(&mut img.data, w, |y, row| {
         let py = y as f32 + 0.5;
         let v = (py - cy) / ry;
-        if v.abs() > 1.45 {
+        if !has_body_warp && v.abs() > 1.45 {
             return;
         }
+        if !has_face_warp && py < cy - ry * 0.25 {
+            return;
+        }
+
         for (x, px) in row.iter_mut().enumerate() {
             let px_x = x as f32 + 0.5;
             let u = (px_x - cx) / rx;
-            if u.abs() > 1.45 {
-                continue;
-            }
             let mut dx = 0.0f32;
             let mut dy = 0.0f32;
 
-            // 1. Face & Jawline Slimming: pull lower-mid cheeks and jawline toward facial midline.
-            if face_slim.abs() > 1e-4 {
-                let side = u.abs();
-                let w_jaw = bell2((side - 0.68) / 0.52, (v - 0.32) / 0.62);
-                dx += u.signum() * face_slim * (rx * 0.065) * w_jaw;
-                dy += face_slim * (ry * 0.015) * w_jaw;
-            }
+            // --- A. Facial Reshaping (when inside face envelope) ---
+            if has_face_warp && v.abs() <= 1.45 && u.abs() <= 1.45 {
+                // 1. Face & Jawline Slimming: pull lower-mid cheeks and jawline toward facial midline.
+                if face_slim.abs() > 1e-4 {
+                    let side = u.abs();
+                    let w_jaw = bell2((side - 0.68) / 0.52, (v - 0.32) / 0.62);
+                    dx += u.signum() * face_slim * (rx * 0.065) * w_jaw;
+                    dy += face_slim * (ry * 0.015) * w_jaw;
+                }
 
-            // 2. Eye Size Enlargement: radial zoom around exact neural right and left eye landmarks.
-            if eye_enlarge.abs() > 1e-4 {
-                for (ex, ey) in [fz.right_eye, fz.left_eye] {
-                    let eu = (px_x - ex) / eye_rx;
-                    let ev = (py - ey) / eye_ry;
-                    let w_eye = bell2(eu, ev);
-                    if w_eye > 0.0 {
-                        dx -= (px_x - ex) * (eye_enlarge * 0.22 * w_eye);
-                        dy -= (py - ey) * (eye_enlarge * 0.22 * w_eye);
+                // 2. Eye Size Enlargement: radial zoom around exact neural right and left eye landmarks.
+                if eye_enlarge.abs() > 1e-4 {
+                    for (ex, ey) in [fz.right_eye, fz.left_eye] {
+                        let eu = (px_x - ex) / eye_rx;
+                        let ev = (py - ey) / eye_ry;
+                        let w_eye = bell2(eu, ev);
+                        if w_eye > 0.0 {
+                            dx -= (px_x - ex) * (eye_enlarge * 0.22 * w_eye);
+                            dy -= (py - ey) * (eye_enlarge * 0.22 * w_eye);
+                        }
+                    }
+                }
+
+                // 3. Nose Slimming: horizontal pinch around the neural nose tip & bridge.
+                if nose_slim.abs() > 1e-4 {
+                    let nu = (px_x - nose_x) / nose_rx;
+                    let nv = (py - nose_y) / nose_ry;
+                    let w_nose = bell2(nu, nv) * nu.abs().min(1.0);
+                    dx += nu.signum() * nose_slim * (nose_rx * 0.16) * w_nose;
+                }
+
+                // 4. Chin Length: vertical elongation (+) or shortening (-) of the lower chin.
+                if chin_length.abs() > 1e-4 {
+                    let cu = (px_x - cx) / chin_rx;
+                    let cv = (py - chin_y) / chin_ry;
+                    let w_chin = bell2(cu, cv);
+                    dy -= chin_length * (ry * 0.075) * w_chin;
+                }
+
+                // 5. Smile Lift: upward (+) or downward (-) shift at neural right and left mouth corners.
+                if smile_lift.abs() > 1e-4 {
+                    for (sign, (mx, my)) in [(-1.0f32, fz.mouth_right), (1.0f32, fz.mouth_left)] {
+                        let mu = (px_x - mx) / smile_rx;
+                        let mv = (py - my) / smile_ry;
+                        let w_smile = bell2(mu, mv);
+                        if w_smile > 0.0 {
+                            dy += smile_lift * (ry * 0.045) * w_smile;
+                            dx -= sign * smile_lift * (rx * 0.015) * w_smile;
+                        }
                     }
                 }
             }
 
-            // 3. Nose Slimming: horizontal pinch around the neural nose tip & bridge.
-            if nose_slim.abs() > 1e-4 {
-                let nu = (px_x - nose_x) / nose_rx;
-                let nv = (py - nose_y) / nose_ry;
-                let w_nose = bell2(nu, nv) * nu.abs().min(1.0);
-                dx += nu.signum() * nose_slim * (nose_rx * 0.16) * w_nose;
-            }
+            // --- B. Full-Body Reshaping (Torso, Waist, Stomach, Hips, Shoulders, Arms, Neck, Chest, Legs) ---
+            if has_body_warp && py >= cy - ry * 0.15 {
+                let u_body = (px_x - cx) / body_rx;
+                let side_body = u_body.abs();
 
-            // 4. Chin Length: vertical elongation (+) or shortening (-) of the lower chin.
-            if chin_length.abs() > 1e-4 {
-                let cu = (px_x - cx) / chin_rx;
-                let cv = (py - chin_y) / chin_ry;
-                let w_chin = bell2(cu, cv);
-                dy -= chin_length * (ry * 0.075) * w_chin;
-            }
+                if side_body <= 1.65 {
+                    // 1. Overall Body Slimming: smooth lateral compression across torso, waist, and hips.
+                    if body_slim.abs() > 1e-4 {
+                        let v_torso = (py - (cy + 2.35 * body_h)) / (body_h * 1.65);
+                        let w_body = bell2((side_body - 0.68) / 0.62, v_torso) * side_body.min(1.0);
+                        dx += u_body.signum() * body_slim * (body_rx * 0.085) * w_body;
+                    }
 
-            // 5. Smile Lift: upward (+) or downward (-) shift at neural right and left mouth corners.
-            if smile_lift.abs() > 1e-4 {
-                for (sign, (mx, my)) in [(-1.0f32, fz.mouth_right), (1.0f32, fz.mouth_left)] {
-                    let mu = (px_x - mx) / smile_rx;
-                    let mv = (py - my) / smile_ry;
-                    let w_smile = bell2(mu, mv);
-                    if w_smile > 0.0 {
-                        dy += smile_lift * (ry * 0.045) * w_smile;
-                        dx -= sign * smile_lift * (rx * 0.015) * w_smile;
+                    // 2. Waist & Stomach Slimming: concentrated inward cinch at the midriff/waistline.
+                    if waist_slim.abs() > 1e-4 {
+                        let v_waist = (py - waist_y) / (body_h * 0.88);
+                        let w_waist = bell2((side_body - 0.62) / 0.55, v_waist) * side_body.min(1.0);
+                        dx += u_body.signum() * waist_slim * (body_rx * 0.095) * w_waist;
+                        dy += waist_slim * (body_h * 0.018) * w_waist;
+                    }
+
+                    // 3. Stomach Flatten (Tummy Tuck): pulls central & lateral abdomen inward and lifts lower belly upward.
+                    if stomach_flat > 1e-4 {
+                        let v_stom = (py - (waist_y + 0.18 * body_h)) / (body_h * 0.82);
+                        let w_stom_center = bell2(u_body / 0.78, v_stom);
+                        let w_stom_side = bell2((side_body - 0.52) / 0.48, v_stom) * side_body.min(1.0);
+                        dx += u_body.signum() * stomach_flat * (body_rx * 0.070) * w_stom_side;
+                        dy += stomach_flat * (body_h * 0.055) * w_stom_center;
+                    }
+
+                    // 4. Hips & S-Curve: + expands hourglass hips outward while cinching upper waist; - slims hips inward.
+                    if hip_enhance.abs() > 1e-4 {
+                        let v_hip = (py - hip_y) / (body_h * 0.85);
+                        let w_hip = bell2((side_body - 0.72) / 0.52, v_hip) * side_body.min(1.0);
+                        dx -= u_body.signum() * hip_enhance * (body_rx * 0.080) * w_hip;
+                        if hip_enhance > 0.0 {
+                            let v_upper_s = (py - (waist_y - 0.10 * body_h)) / (body_h * 0.65);
+                            let w_s = bell2((side_body - 0.60) / 0.45, v_upper_s) * side_body.min(1.0);
+                            dx += u_body.signum() * hip_enhance * (body_rx * 0.032) * w_s;
+                        }
+                    }
+
+                    // 5. Shoulder Width & Posture: + broadens & squares shoulders; - narrows broad shoulders.
+                    if shoulder_width.abs() > 1e-4 {
+                        let v_sh = (py - shoulder_y) / (body_h * 0.65);
+                        let w_sh = bell2((side_body - 0.82) / 0.52, v_sh) * side_body.min(1.0);
+                        dx -= u_body.signum() * shoulder_width * (body_rx * 0.075) * w_sh;
+                        dy += shoulder_width * (body_h * 0.025) * w_sh;
+                    }
+
+                    // 6. Arm Slimming: pinches outer left & right arm corridors toward the arm axes.
+                    if arm_slim.abs() > 1e-4 {
+                        for arm_sign in [-1.0f32, 1.0f32] {
+                            let arm_cx = cx + arm_sign * (body_rx * 0.88);
+                            let au = (px_x - arm_cx) / (body_rx * 0.34).max(4.0);
+                            let av = (py - arm_y) / (body_h * 1.05);
+                            let w_arm = bell2(au, av) * au.abs().min(1.0);
+                            if w_arm > 0.0 {
+                                dx += au.signum() * arm_slim * (body_rx * 0.052) * w_arm;
+                            }
+                        }
+                    }
+
+                    // 7. Neck Slimming & Lengthening: pinches neck sides inward and subtly elongates neck.
+                    if neck_slim.abs() > 1e-4 {
+                        let nu = (px_x - cx) / (rx * 0.92).max(4.0);
+                        let nv = (py - neck_y) / (body_h * 0.48).max(4.0);
+                        let w_neck = bell2(nu, nv);
+                        if w_neck > 0.0 {
+                            dx += nu.signum() * neck_slim * (rx * 0.065) * w_neck * nu.abs().min(1.0);
+                            dy += neck_slim * (body_h * 0.025) * w_neck;
+                        }
+                    }
+
+                    // 8. Chest / Bust Sculpt: radial volume zoom + subtle upward lift around left/right chest anchors.
+                    if chest_enhance.abs() > 1e-4 {
+                        let chest_rx = (body_rx * 0.42).max(4.0);
+                        let chest_ry = (body_h * 0.55).max(4.0);
+                        for c_sign in [-1.0f32, 1.0f32] {
+                            let ccx = cx + c_sign * (body_rx * 0.34);
+                            let cu = (px_x - ccx) / chest_rx;
+                            let cv = (py - chest_y) / chest_ry;
+                            let w_chest = bell2(cu, cv);
+                            if w_chest > 0.0 {
+                                dx -= (px_x - ccx) * (chest_enhance * 0.16 * w_chest);
+                                dy -= (py - chest_y) * (chest_enhance * 0.14 * w_chest);
+                                dy += chest_enhance.max(0.0) * (body_h * 0.025) * w_chest;
+                            }
+                        }
+                    }
+
+                    // 9. Leg Lengthening & Slimming: vertical stretch in lower body + lateral thigh/calf slimming.
+                    if leg_length.abs() > 1e-4 && py > leg_y0 - body_h * 0.35 {
+                        let leg_span = (hf - leg_y0).max(body_h * 0.8);
+                        let t_leg = ((py - leg_y0) / leg_span).clamp(0.0, 1.0);
+                        let w_leg_v = smoothstep(0.0, 0.35, t_leg) * (1.0 - 0.35 * smoothstep(0.75, 1.0, t_leg));
+                        let w_leg_h = bell2(u_body / 1.15, 0.0);
+                        dy -= leg_length * (leg_span * 0.085) * w_leg_v * w_leg_h;
+                        let w_thigh = bell2((side_body - 0.52) / 0.48, 0.0) * w_leg_v * side_body.min(1.0);
+                        dx += u_body.signum() * leg_length * (body_rx * 0.045) * w_thigh;
                     }
                 }
             }
@@ -764,7 +915,7 @@ fn apply_reshape_warp(img: &mut Rgb32f, r: &Retouch, fz: &FaceZone) {
     });
 }
 
-/// Apply Evoto-style portrait & skin retouching in place on scene-linear Rec.2020 `img`.
+/// Apply Evoto-style portrait, skin & body retouching in place on scene-linear Rec.2020 `img`.
 pub fn apply(img: &mut Rgb32f, s: &DevelopSettings, px_per_long: f64) {
     if !s.section_enabled("retouch") || !s.retouch.is_active() || img.data.is_empty() {
         return;
@@ -794,6 +945,9 @@ pub fn apply(img: &mut Rgb32f, s: &DevelopSettings, px_per_long: f64) {
     let lip_enhance = clean_s11(r.lip_enhance);
     let lip_moisture = clean_u01(r.lip_moisture);
     let face_contour = clean_u01(r.face_contour);
+    let stomach_flat = clean_u01(r.stomach_flat);
+    let neck_slim = clean_s11(r.neck_slim);
+    let chest_enhance = clean_s11(r.chest_enhance);
     let hair_luster = clean_u01(r.hair_luster);
     let stray_hair = clean_u01(r.stray_hair);
 
@@ -831,6 +985,7 @@ pub fn apply(img: &mut Rgb32f, s: &DevelopSettings, px_per_long: f64) {
     // 3. Medium blotch/wrinkle/eye-bag band: mid = low_in - base
     let need_fine = smooth > 0.0
         || wrinkle > 0.0
+        || stomach_flat > 0.0
         || eye_clarity > 0.0
         || brow_enhance.abs() > 1e-4
         || teeth_whiten > 0.0
@@ -841,6 +996,7 @@ pub fn apply(img: &mut Rgb32f, s: &DevelopSettings, px_per_long: f64) {
         || shine > 0.0
         || dark_circles > 0.0
         || wrinkle > 0.0
+        || stomach_flat > 0.0
         || eye_brighten > 0.0
         || eye_clarity > 0.0
         || brow_enhance.abs() > 1e-4
@@ -895,6 +1051,13 @@ pub fn apply(img: &mut Rgb32f, s: &DevelopSettings, px_per_long: f64) {
     let mouth_rx = ((fz.mouth_left.0 - fz.mouth_right.0).abs() * 0.85).max(fz.rx * 0.48).max(4.0);
     let mouth_ry = (fz.ry * 0.32).max(4.0);
 
+    let lower_span = (h as f32 - fz.cy).max(fz.ry * 1.2);
+    let body_h = (2.0 * fz.ry).min(lower_span * 0.24).max(fz.ry * 0.75).max(8.0);
+    let body_rx = (fz.rx * 2.15).clamp(w as f32 * 0.16, w as f32 * 0.44).max(8.0);
+    let collar_y = fz.cy + 0.92 * body_h;
+    let chest_y = fz.cy + 1.68 * body_h;
+    let stomach_y = fz.cy + 2.65 * body_h;
+
     for_rows(&mut img.data, w, |y, row| {
         let row_off = y * w;
         let py = y as f32 + 0.5;
@@ -904,15 +1067,22 @@ pub fn apply(img: &mut Rgb32f, s: &DevelopSettings, px_per_long: f64) {
             let i = row_off + x;
             let px_x = x as f32 + 0.5;
             let u_face = (px_x - fz.cx) / fz.rx;
+            let u_body = (px_x - fz.cx) / body_rx;
 
             let l0 = l_data.get(i).copied().unwrap_or(0.0);
             let low = low_data.get(i).copied().unwrap_or(l0);
             let base = base_data.get(i).copied().unwrap_or(low);
             let a0 = a_data.get(i).copied().unwrap_or(0.0);
             let b0 = b_data.get(i).copied().unwrap_or(0.0);
-            // When a neural face is detected, attenuate warm non-subject background outside the face+neck+shoulder envelope.
+            // When a neural face is detected, cover both the face ellipse AND the full body corridor below the face.
             let subject_env = if fz.neural {
-                bell2(u_face / 1.75, (v_face - 0.25) / 1.95).max(0.18)
+                let face_env = bell2(u_face / 1.75, (v_face - 0.25) / 1.95);
+                let body_env = if py >= fz.cy {
+                    bell2(u_body / 1.35, (py - (fz.cy + 2.2 * body_h)) / (body_h * 2.8))
+                } else {
+                    0.0
+                };
+                face_env.max(body_env).max(0.25)
             } else {
                 1.0
             };
@@ -927,7 +1097,7 @@ pub fn apply(img: &mut Rgb32f, s: &DevelopSettings, px_per_long: f64) {
             let mut b = b0;
             let mut changed = false;
 
-            // --- 1. Skin Retouching & Tone ---
+            // --- 1. Skin Retouching & Tone (Face + Full Body Skin) ---
             if w_skin > 1e-4 {
                 if smooth > 0.0 {
                     let mid_atten = 1.0 - smooth * 0.82 * w_skin;
@@ -936,7 +1106,7 @@ pub fn apply(img: &mut Rgb32f, s: &DevelopSettings, px_per_long: f64) {
                     changed = true;
                 }
 
-                // Wrinkle reduction: attenuate narrow dark linear creases (mid < 0) while preserving pores (high)
+                // Wrinkle & body crease/cellulite reduction: attenuate narrow dark linear creases (mid < 0) while preserving pores (high)
                 if wrinkle > 0.0 && mid < 0.0 {
                     let crease_w = smoothstep(0.002, 0.035, -mid) * w_skin;
                     let cur_mid = l - base - high;
@@ -1023,6 +1193,40 @@ pub fn apply(img: &mut Rgb32f, s: &DevelopSettings, px_per_long: f64) {
                     let jaw_hollow = bell2((u_face.abs() - 0.72) / 0.32, (v_face - 0.34) / 0.42);
                     let sculpt = (t_zone_hi * 0.045 - jaw_hollow * 0.042) * face_contour * w_skin;
                     l += sculpt;
+                    changed = true;
+                }
+
+                // 3D Collarbone & Neck Sculpt (subtle clavicle highlight + lateral neck shadow when neck_slim > 0)
+                if neck_slim > 0.0 && py >= fz.cy {
+                    let w_clav = bell2((u_body.abs() - 0.38) / 0.28, (py - collar_y) / (body_h * 0.22));
+                    if w_clav > 1e-3 {
+                        l += 0.032 * neck_slim * w_clav * w_skin;
+                        changed = true;
+                    }
+                }
+
+                // 3D Chest Contour (subtle upper-chest highlight/shadow sculpt when chest_enhance > 0)
+                if chest_enhance > 0.0 && py >= collar_y {
+                    let w_c_hi = bell2((u_body.abs() - 0.30) / 0.26, (py - chest_y) / (body_h * 0.42));
+                    let w_c_sh = bell2(u_body / 0.14, (py - chest_y) / (body_h * 0.38));
+                    let c_sculpt = (w_c_hi * 0.034 - w_c_sh * 0.024) * chest_enhance * w_skin;
+                    if c_sculpt.abs() > 1e-4 {
+                        l += c_sculpt;
+                        changed = true;
+                    }
+                }
+            }
+
+            // --- 1b. 3D Stomach Flatten (works on both bare skin and clothed abdomen) ---
+            if stomach_flat > 0.0 && py >= fz.cy + body_h {
+                let w_ab = bell2(u_body / 0.75, (py - stomach_y) / (body_h * 0.85));
+                if w_ab > 1e-3 {
+                    // Compress convex mid-frequency bulge highlights and lift crease shadows across the abdomen:
+                    let bulge = l - base - high;
+                    l -= bulge * (stomach_flat * 0.78 * w_ab).clamp(0.0, 0.88);
+                    // Subtle vertical abdominal line contour
+                    let ab_side = bell2((u_body.abs() - 0.38) / 0.22, (py - stomach_y) / (body_h * 0.75));
+                    l -= 0.022 * stomach_flat * ab_side;
                     changed = true;
                 }
             }

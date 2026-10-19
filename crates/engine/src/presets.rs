@@ -625,6 +625,28 @@ pub fn builtin() -> Vec<Preset> {
                 }
             }),
         ),
+        p(
+            "Evoto Portrait",
+            "evoto-body",
+            "Body Slim & Sculpt",
+            json!({
+                "retouch": {
+                    "skin_smooth": 45.0,
+                    "skin_texture": 56.0,
+                    "skin_tone_even": 42.0,
+                    "shine_control": 35.0,
+                    "skin_radiance": 18.0,
+                    "face_slim": 15.0,
+                    "body_slim": 32.0,
+                    "waist_slim": 38.0,
+                    "stomach_flat": 45.0,
+                    "hip_enhance": 20.0,
+                    "arm_slim": 28.0,
+                    "neck_slim": 24.0,
+                    "leg_length": 25.0
+                }
+            }),
+        ),
     ]
 }
 

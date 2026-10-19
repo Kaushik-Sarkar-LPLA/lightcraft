@@ -1135,6 +1135,49 @@ pub fn specs() -> Vec<CommandSpec> {
                             r.face_contour = (r.face_contour + 20.0).clamp(40.0, 80.0);
                             r.face_slim = (r.face_slim + 18.0).clamp(20.0, 60.0);
                         }
+                        if q.contains("body") || q.contains("slim") || q.contains("thin") || q.contains("skinny") || q.contains("weight") || q.contains("fit") {
+                            r.body_slim = (r.body_slim + 28.0).clamp(25.0, 75.0);
+                            r.waist_slim = (r.waist_slim + 26.0).clamp(25.0, 75.0);
+                            r.arm_slim = (r.arm_slim + 22.0).clamp(20.0, 65.0);
+                        }
+                        if q.contains("stomach") || q.contains("belly") || q.contains("tummy") || q.contains("abdomen") || q.contains("gut") || q.contains("bloat") || q.contains("flat") {
+                            r.stomach_flat = (r.stomach_flat + 42.0).clamp(40.0, 90.0);
+                            r.waist_slim = (r.waist_slim + 28.0).clamp(30.0, 80.0);
+                        }
+                        if q.contains("waist") || q.contains("hourglass") || q.contains("cinch") {
+                            r.waist_slim = (r.waist_slim + 34.0).clamp(35.0, 85.0);
+                            r.hip_enhance = (r.hip_enhance + 18.0).clamp(15.0, 60.0);
+                        }
+                        if q.contains("hip") || q.contains("curve") || q.contains("s-curve") || q.contains("booty") || q.contains("glute") {
+                            if q.contains("slim hip") || q.contains("narrow hip") || q.contains("reduce hip") {
+                                r.hip_enhance = (r.hip_enhance - 28.0).clamp(-75.0, -20.0);
+                            } else {
+                                r.hip_enhance = (r.hip_enhance + 28.0).clamp(25.0, 75.0);
+                            }
+                        }
+                        if q.contains("shoulder") || q.contains("posture") {
+                            if q.contains("narrow") || q.contains("slim shoulder") || q.contains("smaller shoulder") {
+                                r.shoulder_width = (r.shoulder_width - 25.0).clamp(-70.0, -18.0);
+                            } else {
+                                r.shoulder_width = (r.shoulder_width + 25.0).clamp(20.0, 70.0);
+                            }
+                        }
+                        if q.contains("arm") || q.contains("bicep") || q.contains("tricep") {
+                            r.arm_slim = (r.arm_slim + 32.0).clamp(28.0, 80.0);
+                        }
+                        if q.contains("neck") || q.contains("collarbone") || q.contains("clavicle") || q.contains("double chin") {
+                            r.neck_slim = (r.neck_slim + 30.0).clamp(25.0, 75.0);
+                        }
+                        if q.contains("chest") || q.contains("bust") || q.contains("cleavage") || q.contains("pec") {
+                            if q.contains("reduce") || q.contains("smaller") || q.contains("flat chest") {
+                                r.chest_enhance = (r.chest_enhance - 28.0).clamp(-75.0, -20.0);
+                            } else {
+                                r.chest_enhance = (r.chest_enhance + 28.0).clamp(25.0, 75.0);
+                            }
+                        }
+                        if q.contains("leg") || q.contains("tall") || q.contains("height") || q.contains("thigh") || q.contains("calf") || q.contains("lengthen") {
+                            r.leg_length = (r.leg_length + 30.0).clamp(25.0, 80.0);
+                        }
                         if q.contains("nose") {
                             r.nose_slim = (r.nose_slim + 18.0).clamp(20.0, 55.0);
                         }
@@ -1284,6 +1327,15 @@ pub fn specs() -> Vec<CommandSpec> {
                         if let Some(v) = num(ret_obj, "noseSlim", "nose_slim") { r.nose_slim = v.clamp(-100.0, 100.0); }
                         if let Some(v) = num(ret_obj, "chinLength", "chin_length") { r.chin_length = v.clamp(-100.0, 100.0); }
                         if let Some(v) = num(ret_obj, "smileLift", "smile_lift") { r.smile_lift = v.clamp(-100.0, 100.0); }
+                        if let Some(v) = num(ret_obj, "bodySlim", "body_slim") { r.body_slim = v.clamp(-100.0, 100.0); }
+                        if let Some(v) = num(ret_obj, "waistSlim", "waist_slim") { r.waist_slim = v.clamp(-100.0, 100.0); }
+                        if let Some(v) = num(ret_obj, "stomachFlat", "stomach_flat") { r.stomach_flat = v.clamp(0.0, 100.0); }
+                        if let Some(v) = num(ret_obj, "hipEnhance", "hip_enhance") { r.hip_enhance = v.clamp(-100.0, 100.0); }
+                        if let Some(v) = num(ret_obj, "shoulderWidth", "shoulder_width") { r.shoulder_width = v.clamp(-100.0, 100.0); }
+                        if let Some(v) = num(ret_obj, "armSlim", "arm_slim") { r.arm_slim = v.clamp(-100.0, 100.0); }
+                        if let Some(v) = num(ret_obj, "neckSlim", "neck_slim") { r.neck_slim = v.clamp(-100.0, 100.0); }
+                        if let Some(v) = num(ret_obj, "chestEnhance", "chest_enhance") { r.chest_enhance = v.clamp(-100.0, 100.0); }
+                        if let Some(v) = num(ret_obj, "legLength", "leg_length") { r.leg_length = v.clamp(-100.0, 100.0); }
                         if let Some(v) = num(ret_obj, "hairLuster", "hair_luster") { r.hair_luster = v.clamp(0.0, 100.0); }
                         if let Some(v) = num(ret_obj, "strayHair", "stray_hair") { r.stray_hair = v.clamp(0.0, 100.0); }
                         if let Some(v) = num(ret_obj, "blemishSensitivity", "blemish_sensitivity") { r.blemish_sensitivity = v.clamp(0.0, 100.0); }
