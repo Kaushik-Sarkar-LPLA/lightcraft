@@ -921,6 +921,28 @@ pub struct UiState {
     /// The Print dialog's page, selection and drag.
     #[serde(skip)]
     pub print: crate::print_view::PrintUi,
+    /// OpenAI-compatible AI Retouch Director endpoint (defaults to `/api/ai/v1` proxy -> `https://agy.pixilens.app/v1`).
+    pub ai_endpoint: String,
+    /// AI Retouch Director model ID (defaults to `gemini-4-argon-medium`).
+    pub ai_model: String,
+    /// Optional client-side API key override (kept only in memory / browser localStorage, never written to library files).
+    #[serde(skip)]
+    pub ai_api_key: String,
+    /// Natural-language retouch prompt in the Retouch panel.
+    #[serde(skip)]
+    pub ai_prompt: String,
+    /// Whether the AI endpoint configuration drawer is expanded in the Retouch panel.
+    #[serde(skip)]
+    pub ai_config_open: bool,
+    /// Whether an AI Retouch Director request is currently in flight.
+    #[serde(skip)]
+    pub ai_busy: bool,
+    /// Latest diagnostic summary returned by the AI Retouch Director.
+    #[serde(skip)]
+    pub ai_summary: String,
+    /// Queued AI Retouch Director HTTP completion request for the host (`apps/lightcraft-web`) to dispatch asynchronously.
+    #[serde(skip)]
+    pub ai_pending_request: Option<serde_json::Value>,
 }
 
 /// Settings group ids (`SettingsGroup` serde names) a new preset includes by default: everything
@@ -1391,6 +1413,14 @@ impl Default for UiState {
             status: String::new(),
             dialog: None,
             print: Default::default(),
+            ai_endpoint: "/api/ai/v1".into(),
+            ai_model: "gemini-4-argon-medium".into(),
+            ai_api_key: String::new(),
+            ai_prompt: String::new(),
+            ai_config_open: false,
+            ai_busy: false,
+            ai_summary: String::new(),
+            ai_pending_request: None,
         }
     }
 }
@@ -1473,6 +1503,12 @@ impl UiState {
         self.sidebar.adopt_collapsed(&std::mem::take(&mut self.collapsed_sidebar));
         self.dialog = None;
         self.fullscreen = false;
+        if self.ai_endpoint.trim().is_empty() {
+            self.ai_endpoint = "/api/ai/v1".into();
+        }
+        if self.ai_model.trim().is_empty() {
+            self.ai_model = "gemini-4-argon-medium".into();
+        }
         if !crate::state::PREVIEW_LIMITS.contains(&self.settings.preview_limit) {
             self.settings.preview_limit = AppSettings::default().preview_limit;
         }

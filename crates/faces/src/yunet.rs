@@ -68,10 +68,19 @@ pub fn probe_pixels(n: usize) -> Vec<f32> {
     (0..n).map(|i| ((i % 640) as f32 * 0.3 + ((i * 7919) % 97) as f32 + (i / 640 % 480) as f32 * 0.2) % 255.0).collect()
 }
 
+/// Embedded YuNet 2023mar ONNX weights (232 KB, MIT licence) for zero-setup portrait retouching & blemish detection.
+const BUILTIN_ONNX: &[u8] = include_bytes!("../assets/face_detection_yunet_2023mar.onnx");
+
 pub struct Detector {
     net: Net,
     /// Side of the square network input.
     side: usize,
+}
+
+/// Shared singleton of the embedded YuNet 2023mar neural detector, initialized on first use.
+pub fn builtin() -> Option<&'static std::sync::Arc<Detector>> {
+    static BUILTIN: std::sync::OnceLock<Option<std::sync::Arc<Detector>>> = std::sync::OnceLock::new();
+    BUILTIN.get_or_init(|| Detector::new(BUILTIN_ONNX).ok().map(std::sync::Arc::new)).as_ref()
 }
 
 impl Detector {

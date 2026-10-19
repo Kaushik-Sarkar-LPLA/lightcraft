@@ -614,11 +614,43 @@ impl WebApp {
         let inbox = INBOX.with(|q| std::mem::take(&mut *q.borrow_mut()));
         for (id, params, (resolve, reject)) in inbox {
             let params: serde_json::Value = serde_json::from_str(&params).unwrap_or(json!({}));
+            if id == "retouch.aiDone" {
+                self.app.ui.ai_busy = false;
+                if let Some(err) = params.get("error").and_then(serde_json::Value::as_str)
+                    && !err.is_empty()
+                {
+                    log::warn!("AI Retouch endpoint notice: {err}");
+                }
+                let _ = resolve.call1(&JsValue::NULL, &"{}".into());
+                continue;
+            }
             let r = if id == "web.stats" { Ok(self.web_stats()) } else { self.app.run(&id, params) };
+            if id == "retouch.aiApply" {
+                self.app.ui.ai_busy = false;
+                if let Ok(v) = &r
+                    && let Some(s) = v.get("summary").and_then(serde_json::Value::as_str)
+                    && !s.is_empty()
+                {
+                    self.app.ui.ai_summary = s.to_string();
+                    notice(s.to_string());
+                }
+            }
             let _ = match r {
                 Ok(v) => resolve.call1(&JsValue::NULL, &v.to_string().into()),
                 Err(e) => reject.call1(&JsValue::NULL, &e.into()),
             };
+        }
+    }
+
+    fn dispatch_ai_requests(&mut self) {
+        let Some(req) = self.app.ui.ai_pending_request.take() else { return };
+        let g = js_sys::global();
+        if let Ok(func) = js_sys::Reflect::get(&g, &"lightcraftAiRetouch".into())
+            && let Some(f) = func.dyn_ref::<js_sys::Function>()
+        {
+            let _ = f.call1(&JsValue::NULL, &req.to_string().into());
+        } else {
+            self.app.ui.ai_busy = false;
         }
     }
 }
@@ -638,6 +670,7 @@ impl eframe::App for WebApp {
             w.set_budget(self.app.session.cache_bytes());
         }
         self.app.logic(ctx);
+        self.dispatch_ai_requests();
         self.save();
         if let Some(b) = self.bench.as_mut()
             && let Some(report) = b.step(&mut self.app)
@@ -660,6 +693,7 @@ impl eframe::App for WebApp {
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         self.app.ui(ui);
+        self.dispatch_ai_requests();
         if !self.first_frame_logged && !self.app.widgets.is_empty() {
             self.first_frame_logged = true;
             log::info!("lightcraft first UI frame at {:.0} ms after navigation start", perf_now());

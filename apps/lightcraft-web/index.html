@@ -42,6 +42,74 @@
       await init({ module_or_path: module });
       // automation: `await lightcraft.command("library.info", "{}")` → JSON text
       globalThis.lightcraft = { command };
+      globalThis.lightcraftAiRetouch = async (reqJson) => {
+        try {
+          const req = JSON.parse(reqJson || "{}");
+          const base = (req.endpoint || "/api/ai/v1").replace(/\/+$/, "");
+          const model = req.model || "gemini-4-argon-medium";
+          let apiKey = (req.apiKey || "").trim();
+          if (apiKey) {
+            try { localStorage.setItem("lightcraft_ai_api_key", apiKey); } catch (_) {}
+          } else {
+            try { apiKey = (localStorage.getItem("lightcraft_ai_api_key") || "").trim(); } catch (_) {}
+          }
+          const headers = { "Content-Type": "application/json" };
+          if (apiKey) {
+            headers["Authorization"] = "Bearer " + apiKey;
+          }
+          const userGoal = (req.prompt && req.prompt.trim())
+            ? req.prompt.trim()
+            : "Auto-retouch this portrait for natural high-end skin texture, balanced shine and under-eye circles, bright eyes, and flattering 3D contour.";
+          const sysPrompt =
+            "You are the Evoto.ai Portrait Retouch & Color Director inside LightCraft. " +
+            "Given quantitative portrait telemetry from YuNet ONNX 5-landmark detection and Oklab frequency separation, " +
+            "return ONLY a valid JSON object (no markdown prose outside JSON) with keys: " +
+            "{\"retouch\":{\"skinSmooth\":0..100,\"skinTexture\":0..100,\"skinToneEven\":0..100,\"shineControl\":0..100," +
+            "\"darkCircles\":0..100,\"wrinkleReduce\":0..100,\"skinRadiance\":-100..100,\"skinWarmth\":-100..100," +
+            "\"skinRedness\":-100..100,\"eyeBrighten\":0..100,\"eyeWhiten\":0..100,\"eyeClarity\":0..100," +
+            "\"eyebrowEnhance\":-100..100,\"teethWhiten\":0..100,\"lipEnhance\":-100..100,\"lipMoisture\":0..100," +
+            "\"faceContour\":0..100,\"faceSlim\":-100..100,\"eyeEnlarge\":-100..100,\"noseSlim\":-100..100," +
+            "\"chinLength\":-100..100,\"smileLift\":-100..100,\"hairLuster\":0..100,\"strayHair\":0..100}," +
+            "\"light\":{\"exposure\":-2.0..2.0,\"contrast\":-50..50,\"highlights\":-80..80,\"shadows\":-80..80}," +
+            "\"color\":{\"vibrance\":-50..50,\"saturation\":-50..50}," +
+            "\"summary\":\" concise 1-line summary of the Gemini AI portrait adjustments\"}";
+          const userMsg =
+            "Portrait Telemetry (YuNet ONNX + Oklab):\n" +
+            JSON.stringify(req.telemetry?.analysis || req.telemetry || {}) +
+            "\n\nUser Instruction: " + userGoal +
+            "\n\nRespond ONLY with the JSON object.";
+          const resp = await fetch(base + "/chat/completions", {
+            method: "POST",
+            headers,
+            body: JSON.stringify({
+              model,
+              stream: false,
+              messages: [
+                { role: "system", content: sysPrompt },
+                { role: "user", content: userMsg }
+              ]
+            })
+          });
+          if (!resp.ok) {
+            const errTxt = await resp.text().catch(() => String(resp.status));
+            await command("retouch.aiDone", JSON.stringify({ error: "HTTP " + resp.status + ": " + errTxt.slice(0, 160) }));
+            return;
+          }
+          const data = await resp.json();
+          const content = data?.choices?.[0]?.message?.content || "";
+          if (content) {
+            await command("retouch.aiApply", JSON.stringify({
+              response: content,
+              prompt: req.prompt || "",
+              allSelected: !!req.allSelected
+            }));
+          } else {
+            await command("retouch.aiDone", JSON.stringify({ error: "Empty completion response" }));
+          }
+        } catch (err) {
+          await command("retouch.aiDone", JSON.stringify({ error: String(err) }));
+        }
+      };
       start(font);
     })().catch((e) => {
       console.error(e);

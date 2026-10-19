@@ -103,28 +103,147 @@ pub fn sclera_weight(lab: [f32; 3], w_skin: f32) -> f32 {
     (w_l * w_c * (1.0 - 0.80 * w_skin)).clamp(0.0, 1.0)
 }
 
-/// Detected or canonical portrait face geometry in pixel coordinates.
+/// Quantitative portrait & skin telemetry extracted by YuNet ONNX + Oklab frequency separation
+/// for the AI Retouch Director (Gemini / OpenAI endpoint) and smart auto-retouching.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PortraitAnalysis {
+    pub faces_detected: usize,
+    pub neural_detector: bool,
+    pub primary_face_box: [f32; 4],
+    pub landmarks: [[f32; 2]; 5],
+    pub skin_coverage: f32,
+    pub skin_lightness: f32,
+    pub skin_redness: f32,
+    pub skin_warmth: f32,
+    pub skin_unevenness: f32,
+    pub shine_level: f32,
+    pub dark_circle_depth: f32,
+    pub wrinkle_energy: f32,
+    pub eye_whiteness: f32,
+    pub teeth_yellowness: f32,
+    pub lip_saturation: f32,
+    pub scene_exposure_ev: f32,
+    pub recommended: Retouch,
+}
+
+/// Fast cached neural face detection on a scene-linear Rec.2020 image using embedded YuNet 2023mar.
+fn detect_neural_faces_cached(img: &Rgb32f) -> Vec<lightcraft_faces::yunet::Face> {
+    use std::sync::{Mutex, PoisonError};
+    static CACHE: Mutex<Option<(u64, Vec<lightcraft_faces::yunet::Face>)>> = Mutex::new(None);
+
+    let (w, h) = (img.width, img.height);
+    if w < 48 || h < 48 || img.data.len() < w * h {
+        return Vec::new();
+    }
+    let Some(detector) = lightcraft_faces::yunet::builtin() else {
+        return Vec::new();
+    };
+
+    // Compute a fast 64-point fingerprint so interactive slider drags hit the cache in O(1).
+    let mut hash: u64 = ((w as u64) << 32) ^ (h as u64) ^ 0x9e37_79b9_7f4a_7c15;
+    let step = (img.data.len() / 64).max(1);
+    for px in img.data.iter().step_by(step).take(64) {
+        let r = px[0].to_bits() as u64;
+        let g = px[1].to_bits() as u64;
+        let b = px[2].to_bits() as u64;
+        hash = hash.wrapping_mul(0x517c_c1b7_2722_0a95) ^ r ^ g.rotate_left(21) ^ b.rotate_left(42);
+    }
+
+    if let Some((cached_hash, faces)) = CACHE.lock().unwrap_or_else(PoisonError::into_inner).as_ref()
+        && *cached_hash == hash
+    {
+        return faces.clone();
+    }
+
+    // Downsample to <= 320 px long edge and tone-map to 8-bit sRGB for YuNet inference (~3 ms).
+    let max_edge = 320usize;
+    let scale = (max_edge as f32 / w.max(h) as f32).min(1.0);
+    let dw = ((w as f32 * scale).round() as usize).max(32);
+    let dh = ((h as f32 * scale).round() as usize).max(32);
+    let mut rgb = Vec::with_capacity(dw * dh * 3);
+    for y in 0..dh {
+        let sy = ((y * h) / dh).min(h - 1);
+        let row = sy * w;
+        for x in 0..dw {
+            let sx = ((x * w) / dw).min(w - 1);
+            let px = img.data.get(row + sx).copied().unwrap_or([0.0; 3]);
+            // Convert linear Rec.2020 through Oklab / gamma ~2.2 to approximate display sRGB 0..255
+            let r = (px[0].clamp(0.0, 1.0).powf(0.4545) * 255.0).round() as u8;
+            let g = (px[1].clamp(0.0, 1.0).powf(0.4545) * 255.0).round() as u8;
+            let b = (px[2].clamp(0.0, 1.0).powf(0.4545) * 255.0).round() as u8;
+            rgb.push(r);
+            rgb.push(g);
+            rgb.push(b);
+        }
+    }
+
+    let opts = lightcraft_faces::yunet::Options { score: 0.45, nms_iou: 0.3, max_faces: 12 };
+    let faces = detector.detect(&rgb, dw, dh, &opts).unwrap_or_default();
+    *CACHE.lock().unwrap_or_else(PoisonError::into_inner) = Some((hash, faces.clone()));
+    faces
+}
+
+/// Detected or canonical portrait face geometry in pixel coordinates, backed by YuNet 5-point
+/// neural landmarks when a face is present and Oklab skin statistical moments as fallback.
 #[derive(Clone, Copy, Debug)]
 struct FaceZone {
     cx: f32,
     cy: f32,
     rx: f32,
     ry: f32,
-    eye_y: f32,
-    eye_dx: f32,
+    right_eye: (f32, f32),
+    left_eye: (f32, f32),
+    nose_tip: (f32, f32),
+    mouth_right: (f32, f32),
+    mouth_left: (f32, f32),
     mouth_y: f32,
+    neural: bool,
 }
 
 impl FaceZone {
-    /// Estimate the primary face ellipse and feature anchors from the skin and lip masks,
-    /// falling back smoothly to canonical portrait coordinates when skin coverage is sparse.
-    fn detect(w: usize, h: usize, skin: &Plane, a_plane: &Plane, b_plane: &Plane, l_plane: &Plane) -> Self {
+    /// Locate the primary face and 5 anatomical landmarks via embedded YuNet ONNX neural inference,
+    /// falling back smoothly to Oklab skin/lip moments when no neural face is detected.
+    fn detect(img: &Rgb32f, w: usize, h: usize, skin: &Plane, a_plane: &Plane, b_plane: &Plane, l_plane: &Plane) -> Self {
         let (wf, hf) = (w.max(1) as f32, h.max(1) as f32);
-        let ( mut sum_w, mut sum_x, mut sum_y ) = (0.0f64, 0.0f64, 0.0f64);
+
+        // 1. Try YuNet ONNX neural face + 5-landmark detector first.
+        let neural_faces = detect_neural_faces_cached(img);
+        if let Some(best) = neural_faces.iter().max_by(|a, b| {
+            let area_a = (a.x1 - a.x0) * (a.y1 - a.y0) * a.score;
+            let area_b = (b.x1 - b.x0) * (b.y1 - b.y0) * b.score;
+            area_a.total_cmp(&area_b)
+        }) {
+            let cx = ((best.x0 + best.x1) * 0.5 * wf).clamp(0.0, wf);
+            let cy = ((best.y0 + best.y1) * 0.5 * hf).clamp(0.0, hf);
+            let rx = ((best.x1 - best.x0) * 0.54 * wf).max(8.0);
+            let ry = ((best.y1 - best.y0) * 0.56 * hf).max(8.0);
+            let right_eye = (best.landmarks[0].0.clamp(0.0, 1.0) * wf, best.landmarks[0].1.clamp(0.0, 1.0) * hf);
+            let left_eye = (best.landmarks[1].0.clamp(0.0, 1.0) * wf, best.landmarks[1].1.clamp(0.0, 1.0) * hf);
+            let nose_tip = (best.landmarks[2].0.clamp(0.0, 1.0) * wf, best.landmarks[2].1.clamp(0.0, 1.0) * hf);
+            let mouth_right = (best.landmarks[3].0.clamp(0.0, 1.0) * wf, best.landmarks[3].1.clamp(0.0, 1.0) * hf);
+            let mouth_left = (best.landmarks[4].0.clamp(0.0, 1.0) * wf, best.landmarks[4].1.clamp(0.0, 1.0) * hf);
+            let mouth_y = (mouth_right.1 + mouth_left.1) * 0.5;
+            return Self {
+                cx,
+                cy,
+                rx,
+                ry,
+                right_eye,
+                left_eye,
+                nose_tip,
+                mouth_right,
+                mouth_left,
+                mouth_y,
+                neural: true,
+            };
+        }
+
+        // 2. Fallback: Oklab skin/lip statistical moments (for close-up skin crops or non-frontal portraits).
+        let (mut sum_w, mut sum_x, mut sum_y) = (0.0f64, 0.0f64, 0.0f64);
         let step = (w.min(h) / 64).max(1);
         for y in (0..h).step_by(step) {
             let py = y as f32 + 0.5;
-            // Bias slightly toward the upper 75% of the frame so neck/chest skin doesn't drag the face center down.
             let vy = 1.0 - 0.45 * smoothstep(0.60 * hf, 0.92 * hf, py);
             let row = y * w;
             for x in (0..w).step_by(step) {
@@ -140,15 +259,22 @@ impl FaceZone {
 
         let total_samples = ((w / step).max(1) * (h / step).max(1)) as f64;
         if sum_w < total_samples * 0.015 {
-            let (cx, cy, rx, ry) = (wf * 0.5, hf * 0.44, wf * 0.26, hf * 0.32);
+            let (cx, cy, rx, ry) = (wf * 0.5, hf * 0.44, (wf * 0.26).max(8.0), (hf * 0.32).max(8.0));
+            let eye_y = cy - ry * 0.16;
+            let eye_dx = rx * 0.38;
+            let mouth_y = cy + ry * 0.44;
             return Self {
                 cx,
                 cy,
-                rx: rx.max(8.0),
-                ry: ry.max(8.0),
-                eye_y: cy - ry * 0.16,
-                eye_dx: rx * 0.38,
-                mouth_y: cy + ry * 0.44,
+                rx,
+                ry,
+                right_eye: (cx - eye_dx, eye_y),
+                left_eye: (cx + eye_dx, eye_y),
+                nose_tip: (cx, cy + ry * 0.08),
+                mouth_right: (cx - rx * 0.28, mouth_y),
+                mouth_left: (cx + rx * 0.28, mouth_y),
+                mouth_y,
+                neural: false,
             };
         }
 
@@ -175,7 +301,6 @@ impl FaceZone {
         let rx = (std_x * 1.85).clamp(wf * 0.12, wf * 0.45).max(8.0);
         let ry = (std_y * 2.05).clamp(hf * 0.14, hf * 0.48).max(8.0);
 
-        // Refine mouth vertical anchor if a clear lip cluster exists in the lower face.
         let mut lip_w = 0.0f64;
         let mut lip_y = 0.0f64;
         let y0 = ((cy + ry * 0.12).max(0.0) as usize).min(h);
@@ -203,16 +328,295 @@ impl FaceZone {
         } else {
             cy + ry * 0.44
         };
+        let eye_y = cy - ry * 0.16;
+        let eye_dx = rx * 0.38;
 
         Self {
             cx,
             cy,
             rx,
             ry,
-            eye_y: cy - ry * 0.16,
-            eye_dx: rx * 0.38,
+            right_eye: (cx - eye_dx, eye_y),
+            left_eye: (cx + eye_dx, eye_y),
+            nose_tip: (cx, cy + ry * 0.08),
+            mouth_right: (cx - rx * 0.28, mouth_y),
+            mouth_left: (cx + rx * 0.28, mouth_y),
             mouth_y,
+            neural: false,
         }
+    }
+}
+
+/// Analyze a scene-linear Rec.2020 portrait image using YuNet ONNX neural landmarks and Oklab
+/// frequency separation, returning quantitative telemetry and a recommended `Retouch` recipe.
+pub fn analyze_portrait(img: &Rgb32f) -> PortraitAnalysis {
+    let (w, h) = (img.width, img.height);
+    let n = w * h;
+    if w == 0 || h == 0 || img.data.len() < n {
+        return PortraitAnalysis {
+            faces_detected: 0,
+            neural_detector: false,
+            primary_face_box: [0.25, 0.15, 0.75, 0.85],
+            landmarks: [[0.0; 2]; 5],
+            skin_coverage: 0.0,
+            skin_lightness: 0.65,
+            skin_redness: 0.04,
+            skin_warmth: 0.05,
+            skin_unevenness: 25.0,
+            shine_level: 20.0,
+            dark_circle_depth: 20.0,
+            wrinkle_energy: 15.0,
+            eye_whiteness: 70.0,
+            teeth_yellowness: 20.0,
+            lip_saturation: 40.0,
+            scene_exposure_ev: 0.0,
+            recommended: Retouch::default(),
+        };
+    }
+
+    let mut l_plane = Plane::new(w, h);
+    let mut a_plane = Plane::new(w, h);
+    let mut b_plane = Plane::new(w, h);
+    let mut mask_plane = Plane::new(w, h);
+    for i in 0..n {
+        if let Some(&rgb) = img.data.get(i) {
+            let lab = oklab_from_2020([rgb[0].max(0.0), rgb[1].max(0.0), rgb[2].max(0.0)]);
+            if let Some(v) = l_plane.data.get_mut(i) {
+                *v = lab[0];
+            }
+            if let Some(v) = a_plane.data.get_mut(i) {
+                *v = lab[1];
+            }
+            if let Some(v) = b_plane.data.get_mut(i) {
+                *v = lab[2];
+            }
+            if let Some(v) = mask_plane.data.get_mut(i) {
+                *v = skin_weight(lab);
+            }
+        }
+    }
+
+    let long = w.max(h) as f32;
+    let skin_mask = gaussian(&mask_plane, (long * 0.003).clamp(1.0, 6.0));
+    let neural_faces = detect_neural_faces_cached(img);
+    let fz = FaceZone::detect(img, w, h, &skin_mask, &a_plane, &b_plane, &l_plane);
+
+    let fine_sigma = (long * 0.0018).clamp(0.8, 4.5);
+    let mid_sigma = (long * 0.014).clamp(2.5, 32.0);
+    let low_in = gaussian(&l_plane, fine_sigma);
+    let base_l = guided_fast(&low_in, mid_sigma, 0.0012);
+
+    let (wf, hf) = (w as f32, h as f32);
+    let step = (w.min(h) / 96).max(1);
+    let mut total_samples = 0.0f64;
+    let mut skin_w_sum = 0.0f64;
+    let mut sum_l = 0.0f64;
+    let mut sum_a = 0.0f64;
+    let mut sum_b = 0.0f64;
+    let mut sum_mid_abs = 0.0f64;
+    let mut sum_crease = 0.0f64;
+    let mut sum_shine = 0.0f64;
+    let mut sum_dc = 0.0f64;
+    let mut dc_w_sum = 0.0f64;
+    let mut sclera_sum = 0.0f64;
+    let mut sclera_w_sum = 0.0f64;
+    let mut teeth_b_sum = 0.0f64;
+    let mut teeth_w_sum = 0.0f64;
+    let mut lip_c_sum = 0.0f64;
+    let mut lip_w_sum = 0.0f64;
+
+    for y in (0..h).step_by(step) {
+        let py = y as f32 + 0.5;
+        let v_face = (py - fz.cy) / fz.ry;
+        let row = y * w;
+        for x in (0..w).step_by(step) {
+            total_samples += 1.0;
+            let px_x = x as f32 + 0.5;
+            let u_face = (px_x - fz.cx) / fz.rx;
+            let in_face = bell2(u_face / 1.25, v_face / 1.35);
+            if in_face <= 1e-3 {
+                continue;
+            }
+            let i = row + x;
+            let l0 = l_plane.data.get(i).copied().unwrap_or(0.0);
+            let low = low_in.data.get(i).copied().unwrap_or(l0);
+            let base = base_l.data.get(i).copied().unwrap_or(low);
+            let a0 = a_plane.data.get(i).copied().unwrap_or(0.0);
+            let b0 = b_plane.data.get(i).copied().unwrap_or(0.0);
+            let ws = (skin_mask.data.get(i).copied().unwrap_or(0.0) * in_face).clamp(0.0, 1.0);
+            let high = l0 - low;
+            let mid = low - base;
+            let detail = high.abs() + 0.5 * mid.abs();
+
+            if ws > 0.15 {
+                let sw = f64::from(ws);
+                skin_w_sum += sw;
+                sum_l += sw * f64::from(l0);
+                sum_a += sw * f64::from(a0);
+                sum_b += sw * f64::from(b0);
+                sum_mid_abs += sw * f64::from(mid.abs());
+                if mid < -0.002 {
+                    sum_crease += sw * f64::from(-mid);
+                }
+                if l0 > 0.65 && l0 > base {
+                    sum_shine += sw * f64::from((l0 - base) * smoothstep(0.62, 0.82, l0));
+                }
+
+                // Under-eye zones right below each eye landmark
+                let eye_rx = (fz.rx * 0.30).max(4.0);
+                let eye_ry = (fz.ry * 0.22).max(4.0);
+                let dc_r = bell2((px_x - fz.right_eye.0) / eye_rx, (py - (fz.right_eye.1 + eye_ry * 0.72)) / eye_ry);
+                let dc_l = bell2((px_x - fz.left_eye.0) / eye_rx, (py - (fz.left_eye.1 + eye_ry * 0.72)) / eye_ry);
+                let dc_zone = dc_r.max(dc_l);
+                if dc_zone > 0.1 {
+                    let dw = sw * f64::from(dc_zone);
+                    dc_w_sum += dw;
+                    sum_dc += dw * f64::from((base - low).max(0.0));
+                }
+            }
+
+            let sw_sclera = sclera_weight([l0, a0, b0], ws) * in_face;
+            if sw_sclera > 0.15 {
+                sclera_w_sum += f64::from(sw_sclera);
+                sclera_sum += f64::from(sw_sclera * l0);
+            }
+
+            let mouth_v = (py - fz.mouth_y) / (fz.ry * 0.32).max(4.0);
+            let mouth_box = bell2(u_face / 0.55, mouth_v);
+            if mouth_box > 0.1 {
+                let wt = teeth_weight([l0, a0, b0], detail) * mouth_box;
+                if wt > 0.15 {
+                    teeth_w_sum += f64::from(wt);
+                    teeth_b_sum += f64::from(wt * b0.max(0.0));
+                }
+                let wl = lip_weight([l0, a0, b0]) * mouth_box;
+                if wl > 0.15 {
+                    lip_w_sum += f64::from(wl);
+                    lip_c_sum += f64::from(wl * a0.hypot(b0));
+                }
+            }
+        }
+    }
+
+    let skin_coverage = (skin_w_sum / total_samples.max(1.0)).clamp(0.0, 1.0) as f32;
+    let skin_lightness = if skin_w_sum > 1e-3 { (sum_l / skin_w_sum) as f32 } else { 0.66 };
+    let skin_redness = if skin_w_sum > 1e-3 { (sum_a / skin_w_sum) as f32 } else { 0.042 };
+    let skin_warmth = if skin_w_sum > 1e-3 { (sum_b / skin_w_sum) as f32 } else { 0.052 };
+    let skin_unevenness = if skin_w_sum > 1e-3 {
+        (((sum_mid_abs / skin_w_sum) as f32 / 0.024) * 100.0).clamp(10.0, 95.0)
+    } else {
+        35.0
+    };
+    let shine_level = if skin_w_sum > 1e-3 {
+        (((sum_shine / skin_w_sum) as f32 / 0.008) * 100.0).clamp(5.0, 95.0)
+    } else {
+        20.0
+    };
+    let dark_circle_depth = if dc_w_sum > 1e-3 {
+        (((sum_dc / dc_w_sum) as f32 / 0.022) * 100.0).clamp(10.0, 95.0)
+    } else {
+        25.0
+    };
+    let wrinkle_energy = if skin_w_sum > 1e-3 {
+        (((sum_crease / skin_w_sum) as f32 / 0.012) * 100.0).clamp(5.0, 95.0)
+    } else {
+        20.0
+    };
+    let eye_whiteness = if sclera_w_sum > 1e-3 {
+        (((sclera_sum / sclera_w_sum) as f32) * 100.0).clamp(35.0, 95.0)
+    } else {
+        70.0
+    };
+    let teeth_yellowness = if teeth_w_sum > 1e-3 {
+        (((teeth_b_sum / teeth_w_sum) as f32 / 0.040) * 100.0).clamp(5.0, 95.0)
+    } else {
+        25.0
+    };
+    let lip_saturation = if lip_w_sum > 1e-3 {
+        (((lip_c_sum / lip_w_sum) as f32 / 0.14) * 100.0).clamp(15.0, 95.0)
+    } else {
+        45.0
+    };
+    let scene_exposure_ev = ((0.67 - skin_lightness) * 2.2).clamp(-1.5, 1.5);
+
+    // Derive intelligent baseline Retouch sliders from the quantitative telemetry:
+    let rec_smooth = (28.0 + skin_unevenness * 0.52).clamp(25.0, 75.0).round() as f64;
+    let rec_tone_even = (22.0 + skin_unevenness * 0.48).clamp(20.0, 70.0).round() as f64;
+    let rec_shine = (18.0 + shine_level * 0.65).clamp(15.0, 80.0).round() as f64;
+    let rec_dc = (20.0 + dark_circle_depth * 0.58).clamp(15.0, 75.0).round() as f64;
+    let rec_wrinkle = (12.0 + wrinkle_energy * 0.50).clamp(10.0, 65.0).round() as f64;
+    let rec_radiance = ((0.69 - skin_lightness).max(0.0) * 140.0 + 14.0).clamp(10.0, 45.0).round() as f64;
+    let rec_redness = if skin_redness > 0.048 {
+        (-((skin_redness - 0.044) * 900.0)).clamp(-35.0, -6.0).round() as f64
+    } else {
+        0.0
+    };
+    let rec_warmth = if skin_warmth < 0.048 {
+        ((0.052 - skin_warmth) * 650.0).clamp(4.0, 24.0).round() as f64
+    } else {
+        6.0
+    };
+
+    let recommended = Retouch {
+        skin_smooth: rec_smooth,
+        skin_texture: 56.0,
+        skin_tone_even: rec_tone_even,
+        shine_control: rec_shine,
+        dark_circles: rec_dc,
+        wrinkle_reduce: rec_wrinkle,
+        skin_radiance: rec_radiance,
+        skin_warmth: rec_warmth,
+        skin_redness: rec_redness,
+        eye_brighten: 32.0,
+        eye_whiten: (100.0 - eye_whiteness as f64).clamp(15.0, 40.0).round(),
+        eye_clarity: 28.0,
+        eyebrow_enhance: 14.0,
+        teeth_whiten: (15.0 + teeth_yellowness as f64 * 0.45).clamp(15.0, 55.0).round(),
+        lip_enhance: 18.0,
+        lip_moisture: 20.0,
+        face_contour: 28.0,
+        face_slim: 10.0,
+        eye_enlarge: 8.0,
+        nose_slim: 8.0,
+        chin_length: 0.0,
+        smile_lift: 10.0,
+        hair_luster: 22.0,
+        stray_hair: 24.0,
+        blemish_sensitivity: 55.0,
+    };
+
+    let primary_face_box = [
+        ((fz.cx - fz.rx) / wf).clamp(0.0, 1.0),
+        ((fz.cy - fz.ry) / hf).clamp(0.0, 1.0),
+        ((fz.cx + fz.rx) / wf).clamp(0.0, 1.0),
+        ((fz.cy + fz.ry) / hf).clamp(0.0, 1.0),
+    ];
+    let landmarks = [
+        [fz.right_eye.0 / wf, fz.right_eye.1 / hf],
+        [fz.left_eye.0 / wf, fz.left_eye.1 / hf],
+        [fz.nose_tip.0 / wf, fz.nose_tip.1 / hf],
+        [fz.mouth_right.0 / wf, fz.mouth_right.1 / hf],
+        [fz.mouth_left.0 / wf, fz.mouth_left.1 / hf],
+    ];
+
+    PortraitAnalysis {
+        faces_detected: if fz.neural { neural_faces.len() } else { usize::from(skin_coverage > 0.03) },
+        neural_detector: fz.neural,
+        primary_face_box,
+        landmarks,
+        skin_coverage,
+        skin_lightness,
+        skin_redness,
+        skin_warmth,
+        skin_unevenness,
+        shine_level,
+        dark_circle_depth,
+        wrinkle_energy,
+        eye_whiteness,
+        teeth_yellowness,
+        lip_saturation,
+        scene_exposure_ev,
+        recommended,
     }
 }
 
@@ -277,13 +681,12 @@ fn apply_reshape_warp(img: &mut Rgb32f, r: &Retouch, fz: &FaceZone) {
     let (cx, cy, rx, ry) = (fz.cx, fz.cy, fz.rx, fz.ry);
     let eye_rx = (rx * 0.25).max(4.0);
     let eye_ry = (ry * 0.20).max(4.0);
-    let nose_y = cy + ry * 0.06;
+    let (nose_x, nose_y) = fz.nose_tip;
     let nose_rx = (rx * 0.34).max(4.0);
     let nose_ry = (ry * 0.28).max(4.0);
     let chin_y = cy + ry * 0.82;
     let chin_rx = (rx * 0.68).max(4.0);
     let chin_ry = (ry * 0.45).max(4.0);
-    let mouth_dx = rx * 0.28;
     let smile_rx = (rx * 0.26).max(4.0);
     let smile_ry = (ry * 0.24).max(4.0);
 
@@ -306,16 +709,13 @@ fn apply_reshape_warp(img: &mut Rgb32f, r: &Retouch, fz: &FaceZone) {
             if face_slim.abs() > 1e-4 {
                 let side = u.abs();
                 let w_jaw = bell2((side - 0.68) / 0.52, (v - 0.32) / 0.62);
-                // Positive face_slim samples further outward (sign(u)), moving the contour inward.
                 dx += u.signum() * face_slim * (rx * 0.065) * w_jaw;
                 dy += face_slim * (ry * 0.015) * w_jaw;
             }
 
-            // 2. Eye Size Enlargement: radial zoom around left and right eye centers.
+            // 2. Eye Size Enlargement: radial zoom around exact neural right and left eye landmarks.
             if eye_enlarge.abs() > 1e-4 {
-                for sign in [-1.0f32, 1.0f32] {
-                    let ex = cx + sign * fz.eye_dx;
-                    let ey = fz.eye_y;
+                for (ex, ey) in [fz.right_eye, fz.left_eye] {
                     let eu = (px_x - ex) / eye_rx;
                     let ev = (py - ey) / eye_ry;
                     let w_eye = bell2(eu, ev);
@@ -326,9 +726,9 @@ fn apply_reshape_warp(img: &mut Rgb32f, r: &Retouch, fz: &FaceZone) {
                 }
             }
 
-            // 3. Nose Slimming: horizontal pinch around the nose bridge and alar wings.
+            // 3. Nose Slimming: horizontal pinch around the neural nose tip & bridge.
             if nose_slim.abs() > 1e-4 {
-                let nu = (px_x - cx) / nose_rx;
+                let nu = (px_x - nose_x) / nose_rx;
                 let nv = (py - nose_y) / nose_ry;
                 let w_nose = bell2(nu, nv) * nu.abs().min(1.0);
                 dx += nu.signum() * nose_slim * (nose_rx * 0.16) * w_nose;
@@ -342,16 +742,13 @@ fn apply_reshape_warp(img: &mut Rgb32f, r: &Retouch, fz: &FaceZone) {
                 dy -= chin_length * (ry * 0.075) * w_chin;
             }
 
-            // 5. Smile Lift: upward (+) or downward (-) shift at left and right mouth corners.
+            // 5. Smile Lift: upward (+) or downward (-) shift at neural right and left mouth corners.
             if smile_lift.abs() > 1e-4 {
-                for sign in [-1.0f32, 1.0f32] {
-                    let mx = cx + sign * mouth_dx;
-                    let my = fz.mouth_y;
+                for (sign, (mx, my)) in [(-1.0f32, fz.mouth_right), (1.0f32, fz.mouth_left)] {
                     let mu = (px_x - mx) / smile_rx;
                     let mv = (py - my) / smile_ry;
                     let w_smile = bell2(mu, mv);
                     if w_smile > 0.0 {
-                        // Positive smile_lift samples slightly lower (+y), moving mouth corners upward (-y).
                         dy += smile_lift * (ry * 0.045) * w_smile;
                         dx -= sign * smile_lift * (rx * 0.015) * w_smile;
                     }
@@ -426,7 +823,7 @@ pub fn apply(img: &mut Rgb32f, s: &DevelopSettings, px_per_long: f64) {
 
     let mask_sigma = (long * 0.003).clamp(1.0, 8.0);
     let skin_mask = gaussian(&mask_plane, mask_sigma);
-    let fz = FaceZone::detect(w, h, &skin_mask, &a_plane, &b_plane, &l_plane);
+    let fz = FaceZone::detect(img, w, h, &skin_mask, &a_plane, &b_plane, &l_plane);
 
     // Frequency separation on perceptual lightness L:
     // 1. Fine pore/strand texture band: high = L - gaussian(L, fine_sigma)
@@ -492,6 +889,12 @@ pub fn apply(img: &mut Rgb32f, s: &DevelopSettings, px_per_long: f64) {
     let ea_data = even_a.as_ref().map(|p| p.data.as_slice());
     let eb_data = even_b.as_ref().map(|p| p.data.as_slice());
 
+    let eye_rx = (fz.rx * 0.34).max(4.0);
+    let eye_ry = (fz.ry * 0.24).max(4.0);
+    let mouth_cx = (fz.mouth_right.0 + fz.mouth_left.0) * 0.5;
+    let mouth_rx = ((fz.mouth_left.0 - fz.mouth_right.0).abs() * 0.85).max(fz.rx * 0.48).max(4.0);
+    let mouth_ry = (fz.ry * 0.32).max(4.0);
+
     for_rows(&mut img.data, w, |y, row| {
         let row_off = y * w;
         let py = y as f32 + 0.5;
@@ -507,7 +910,13 @@ pub fn apply(img: &mut Rgb32f, s: &DevelopSettings, px_per_long: f64) {
             let base = base_data.get(i).copied().unwrap_or(low);
             let a0 = a_data.get(i).copied().unwrap_or(0.0);
             let b0 = b_data.get(i).copied().unwrap_or(0.0);
-            let w_skin = m_data.get(i).copied().unwrap_or(0.0).clamp(0.0, 1.0);
+            // When a neural face is detected, attenuate warm non-subject background outside the face+neck+shoulder envelope.
+            let subject_env = if fz.neural {
+                bell2(u_face / 1.75, (v_face - 0.25) / 1.95).max(0.18)
+            } else {
+                1.0
+            };
+            let w_skin = (m_data.get(i).copied().unwrap_or(0.0) * subject_env).clamp(0.0, 1.0);
 
             let high = l0 - low;
             let mid = low - base;
@@ -537,9 +946,12 @@ pub fn apply(img: &mut Rgb32f, s: &DevelopSettings, px_per_long: f64) {
                     }
                 }
 
-                // Under-eye dark circles & eye bags: infraorbital zone + dark cool skin trough lift
+                // Under-eye dark circles & eye bags: infraorbital zone right below neural eye landmarks + trough lift
                 if dark_circles > 0.0 {
-                    let under_eye_zone = bell2((u_face.abs() - 0.36) / 0.38, (v_face - 0.04) / 0.26)
+                    let dc_r = bell2((px_x - fz.right_eye.0) / eye_rx, (py - (fz.right_eye.1 + eye_ry * 0.72)) / eye_ry);
+                    let dc_l = bell2((px_x - fz.left_eye.0) / eye_rx, (py - (fz.left_eye.1 + eye_ry * 0.72)) / eye_ry);
+                    let under_eye_zone = dc_r
+                        .max(dc_l)
                         .max(0.45 * bell2(u_face / 0.85, (v_face - 0.02) / 0.45));
                     let trough = (base - low).max(0.0);
                     let w_dc = w_skin * (0.35 + 0.65 * under_eye_zone);
@@ -617,8 +1029,9 @@ pub fn apply(img: &mut Rgb32f, s: &DevelopSettings, px_per_long: f64) {
 
             // --- 2. Eyes & Eyebrows ---
             if eye_brighten > 0.0 || eye_whiten > 0.0 || eye_clarity > 0.0 || brow_enhance.abs() > 1e-4 {
-                let eye_box = bell2((u_face.abs() - 0.38) / 0.36, (v_face + 0.16) / 0.26)
-                    .max(0.35 * bell2(u_face / 0.85, (v_face + 0.16) / 0.40));
+                let er = bell2((px_x - fz.right_eye.0) / eye_rx, (py - fz.right_eye.1) / eye_ry);
+                let el = bell2((px_x - fz.left_eye.0) / eye_rx, (py - fz.left_eye.1) / eye_ry);
+                let eye_box = er.max(el).max(0.35 * bell2(u_face / 0.85, (v_face + 0.16) / 0.40));
                 if eye_box > 1e-3 {
                     let w_sclera = sclera_weight([l0, a0, b0], w_skin) * eye_box;
                     if eye_whiten > 0.0 && w_sclera > 1e-3 {
@@ -641,8 +1054,9 @@ pub fn apply(img: &mut Rgb32f, s: &DevelopSettings, px_per_long: f64) {
                 }
 
                 if brow_enhance.abs() > 1e-4 {
-                    let brow_box = bell2((u_face.abs() - 0.38) / 0.38, (v_face + 0.32) / 0.20)
-                        .max(0.35 * bell2(u_face / 0.85, (v_face + 0.32) / 0.30));
+                    let br = bell2((px_x - fz.right_eye.0) / (eye_rx * 1.15), (py - (fz.right_eye.1 - eye_ry * 0.65)) / (eye_ry * 0.85));
+                    let bl = bell2((px_x - fz.left_eye.0) / (eye_rx * 1.15), (py - (fz.left_eye.1 - eye_ry * 0.65)) / (eye_ry * 0.85));
+                    let brow_box = br.max(bl).max(0.35 * bell2(u_face / 0.85, (v_face + 0.32) / 0.30));
                     let dark_brow = (1.0 - smoothstep(0.38, 0.62, l0)) * (1.0 - 0.65 * w_skin) * smoothstep(0.003, 0.025, detail);
                     let w_brow = brow_box * dark_brow;
                     if w_brow > 1e-3 {
@@ -656,8 +1070,9 @@ pub fn apply(img: &mut Rgb32f, s: &DevelopSettings, px_per_long: f64) {
 
             // --- 3. Mouth, Teeth & Lips ---
             if teeth_whiten > 0.0 || lip_enhance.abs() > 1e-4 || lip_moisture > 0.0 {
-                let mouth_v = (py - fz.mouth_y) / (fz.ry * 0.32).max(4.0);
-                let mouth_box = bell2(u_face / 0.52, mouth_v).max(0.45 * bell2(u_face / 0.90, (v_face - 0.42) / 0.55));
+                let mouth_u = (px_x - mouth_cx) / mouth_rx;
+                let mouth_v = (py - fz.mouth_y) / mouth_ry;
+                let mouth_box = bell2(mouth_u, mouth_v).max(0.45 * bell2(u_face / 0.90, (v_face - 0.42) / 0.55));
                 if mouth_box > 1e-3 {
                     if teeth_whiten > 0.0 {
                         let w_teeth = teeth_weight([l0, a0, b0], detail) * mouth_box;

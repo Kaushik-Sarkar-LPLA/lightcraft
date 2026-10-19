@@ -823,8 +823,9 @@ pub fn specs() -> Vec<CommandSpec> {
                         continue;
                     };
                     let img = rendered.image;
-                    let mut boxes: Vec<lightcraft_pipeline::blemish::FaceBox> = match super::face_detect::detector(s) {
-                        Ok(detector) => {
+                    let detector_opt = super::face_detect::detector(s).ok().or_else(|| lightcraft_faces::yunet::builtin().cloned());
+                    let mut boxes: Vec<lightcraft_pipeline::blemish::FaceBox> = match detector_opt {
+                        Some(detector) => {
                             let rgb: Vec<u8> = img.data.iter().flat_map(|px| [px[0], px[1], px[2]]).collect();
                             match detector.detect(&rgb, img.width, img.height, &lightcraft_faces::yunet::Options::default()) {
                                 Ok(faces) => faces
@@ -840,7 +841,7 @@ pub fn specs() -> Vec<CommandSpec> {
                                 Err(_) => Vec::new(),
                             }
                         }
-                        Err(_) => Vec::new(),
+                        None => Vec::new(),
                     };
                     if boxes.is_empty()
                         && let Some(ph) = s.catalog.photo(id)
@@ -896,6 +897,266 @@ pub fn specs() -> Vec<CommandSpec> {
                     s.commit("Find Blemishes", lightcraft_catalog::Op::Batch { ops })?;
                 }
                 Ok(json!({"faces": total_faces, "spots": active_out, "added": total_added, "photos": touched_photos}))
+            }
+        ),
+        cmd!(
+            query "retouch.analyze",
+            "Analyze Portrait for AI Retouch",
+            [],
+            None,
+            "{id?} — run YuNet ONNX neural 5-landmark detection and Oklab frequency-separation skin/feature analysis on the photo → {id, fileName, analysis, current}",
+            has_active,
+            |s, p| {
+                let c = "retouch.analyze";
+                let id = p
+                    .get("id")
+                    .and_then(Value::as_u64)
+                    .map(crate::PhotoId)
+                    .or_else(|| s.active())
+                    .ok_or_else(|| bad(c, "no active photo"))?;
+                let base_settings = lightcraft_develop::DevelopSettings::default();
+                let job = s.preview_job(id, 512, 512, false, &base_settings).ok_or_else(|| bad(c, "could not render preview"))?;
+                let rendered = job.run().rendered.map_err(|e| bad(c, e))?;
+                let rgba = rendered.image;
+                let mut lin = lightcraft_raster::Rgb32f::new(rgba.width, rgba.height);
+                for (dst, src) in lin.data.iter_mut().zip(rgba.data.iter()) {
+                    let r = (f32::from(src[0]) / 255.0).powf(2.2);
+                    let g = (f32::from(src[1]) / 255.0).powf(2.2);
+                    let b = (f32::from(src[2]) / 255.0).powf(2.2);
+                    *dst = [r, g, b];
+                }
+                let analysis = lightcraft_pipeline::retouch::analyze_portrait(&lin);
+                let cur = s.develop_of(id).unwrap_or_default();
+                let file_name = s.catalog.photo(id).map(|ph| ph.file_name.clone()).unwrap_or_default();
+                Ok(json!({
+                    "id": id.0,
+                    "fileName": file_name,
+                    "analysis": analysis,
+                    "current": {
+                        "retouch": cur.retouch,
+                        "exposure": cur.light.exposure,
+                        "contrast": cur.light.contrast,
+                        "highlights": cur.light.highlights,
+                        "shadows": cur.light.shadows,
+                        "temp": cur.wb.temp,
+                        "tint": cur.wb.tint,
+                        "vibrance": cur.color.vibrance,
+                        "saturation": cur.color.saturation,
+                    }
+                }))
+            }
+        ),
+        cmd!(
+            "retouch.aiApply",
+            "AI Retouch Director",
+            ["Develop"],
+            None,
+            "{response?: string, prompt?: string, allSelected?: bool} — apply AI Retouch Director recipe from Gemini/OpenAI JSON completion or YuNet ONNX + Oklab portrait analysis → {changed, summary, neural}",
+            has_active,
+            |s, p| {
+                let c = "retouch.aiApply";
+                let active_id = s.active().ok_or_else(|| bad(c, "no active photo"))?;
+                let all_selected = p.get("allSelected").and_then(Value::as_bool).unwrap_or(false);
+                let prompt = p.get("prompt").and_then(Value::as_str).unwrap_or("").trim();
+                let response_str = p.get("response").and_then(Value::as_str).unwrap_or("").trim();
+
+                let target_ids: Vec<crate::PhotoId> = if all_selected && !s.selection.ids.is_empty() {
+                    s.selection.ids.clone()
+                } else {
+                    vec![active_id]
+                };
+
+                // Extract optional JSON object from LLM completion text (handles ```json ... ``` fences or raw JSON).
+                let parsed_ai: Option<Value> = if !response_str.is_empty() {
+                    let start = response_str.find('{');
+                    let end = response_str.rfind('}');
+                    if let (Some(i), Some(j)) = (start, end)
+                        && j > i
+                    {
+                        serde_json::from_str::<Value>(&response_str[i..=j]).ok()
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+
+                let mut ops: Vec<lightcraft_catalog::Op> = Vec::new();
+                let mut summary = String::new();
+                let mut any_neural = false;
+
+                for id in target_ids {
+                    let base_settings = lightcraft_develop::DevelopSettings::default();
+                    let analysis = if let Some(job) = s.preview_job(id, 512, 512, false, &base_settings)
+                        && let Ok(rendered) = job.run().rendered
+                    {
+                        let rgba = rendered.image;
+                        let mut lin = lightcraft_raster::Rgb32f::new(rgba.width, rgba.height);
+                        for (dst, src) in lin.data.iter_mut().zip(rgba.data.iter()) {
+                            let r = (f32::from(src[0]) / 255.0).powf(2.2);
+                            let g = (f32::from(src[1]) / 255.0).powf(2.2);
+                            let b = (f32::from(src[2]) / 255.0).powf(2.2);
+                            *dst = [r, g, b];
+                        }
+                        lightcraft_pipeline::retouch::analyze_portrait(&lin)
+                    } else {
+                        lightcraft_pipeline::retouch::analyze_portrait(&lightcraft_raster::Rgb32f::new(0, 0))
+                    };
+
+                    if analysis.neural_detector {
+                        any_neural = true;
+                    }
+
+                    let mut dd = (*s.develop_of(id).unwrap_or_default()).clone();
+                    let mut r = analysis.recommended.clone();
+
+                    // Apply natural-language prompt intent on top of telemetry baseline:
+                    let q = prompt.to_ascii_lowercase();
+                    if !q.is_empty() {
+                        if q.contains("natural") || q.contains("subtle") || q.contains("light") {
+                            r.skin_smooth = (r.skin_smooth * 0.72).clamp(20.0, 50.0).round();
+                            r.skin_texture = 68.0;
+                            r.face_slim = 0.0;
+                            r.eye_enlarge = 0.0;
+                        }
+                        if q.contains("glamour") || q.contains("beauty") || q.contains("flawless") || q.contains("smooth") {
+                            r.skin_smooth = (r.skin_smooth + 22.0).clamp(55.0, 88.0);
+                            r.skin_tone_even = (r.skin_tone_even + 18.0).clamp(50.0, 85.0);
+                            r.skin_radiance = (r.skin_radiance + 14.0).clamp(20.0, 55.0);
+                        }
+                        if q.contains("editorial") || q.contains("magazine") || q.contains("pore") || q.contains("texture") {
+                            r.skin_texture = 74.0;
+                            r.face_contour = (r.face_contour + 20.0).clamp(38.0, 75.0);
+                        }
+                        if q.contains("male") || q.contains("men") || q.contains("masculine") {
+                            r.skin_smooth = r.skin_smooth.clamp(25.0, 42.0);
+                            r.skin_texture = 78.0;
+                            r.lip_enhance = 0.0;
+                            r.lip_moisture = 0.0;
+                            r.eye_enlarge = 0.0;
+                        }
+                        if q.contains("shine") || q.contains("oil") || q.contains("sweat") || q.contains("matte") {
+                            r.shine_control = (r.shine_control + 28.0).clamp(60.0, 95.0);
+                        }
+                        if q.contains("dark circle") || q.contains("eye bag") || q.contains("tired") || q.contains("undereye") || q.contains("under-eye") {
+                            r.dark_circles = (r.dark_circles + 26.0).clamp(55.0, 92.0);
+                        }
+                        if q.contains("wrinkle") || q.contains("line") || q.contains("young") || q.contains("age") {
+                            r.wrinkle_reduce = (r.wrinkle_reduce + 28.0).clamp(45.0, 85.0);
+                        }
+                        if q.contains("warm") || q.contains("tan") || q.contains("golden") || q.contains("sun") {
+                            r.skin_warmth = (r.skin_warmth + 18.0).clamp(15.0, 50.0);
+                        }
+                        if q.contains("red") || q.contains("rosacea") || q.contains("flush") {
+                            r.skin_redness = (r.skin_redness - 20.0).clamp(-55.0, -15.0);
+                        }
+                        if q.contains("eye") || q.contains("bright") || q.contains("catchlight") {
+                            r.eye_brighten = (r.eye_brighten + 20.0).clamp(42.0, 80.0);
+                            r.eye_whiten = (r.eye_whiten + 15.0).clamp(30.0, 70.0);
+                            r.eye_clarity = (r.eye_clarity + 18.0).clamp(35.0, 75.0);
+                        }
+                        if q.contains("teeth") || q.contains("white") || q.contains("smile") {
+                            r.teeth_whiten = (r.teeth_whiten + 22.0).clamp(45.0, 85.0);
+                            r.smile_lift = (r.smile_lift + 15.0).clamp(18.0, 55.0);
+                        }
+                        if q.contains("lip") || q.contains("gloss") {
+                            r.lip_enhance = (r.lip_enhance + 18.0).clamp(25.0, 65.0);
+                            r.lip_moisture = (r.lip_moisture + 22.0).clamp(30.0, 75.0);
+                        }
+                        if q.contains("slim") || q.contains("jaw") || q.contains("sculpt") || q.contains("contour") {
+                            r.face_contour = (r.face_contour + 20.0).clamp(40.0, 80.0);
+                            r.face_slim = (r.face_slim + 18.0).clamp(20.0, 60.0);
+                        }
+                        if q.contains("nose") {
+                            r.nose_slim = (r.nose_slim + 18.0).clamp(20.0, 55.0);
+                        }
+                        if q.contains("chin") {
+                            r.chin_length = -18.0;
+                        }
+                        if q.contains("hair") || q.contains("flyaway") || q.contains("stray") {
+                            r.hair_luster = (r.hair_luster + 22.0).clamp(35.0, 75.0);
+                            r.stray_hair = (r.stray_hair + 26.0).clamp(40.0, 85.0);
+                        }
+                    }
+
+                    // If Gemini / OpenAI returned structured JSON overrides, apply them with safe clamping:
+                    if let Some(ai) = &parsed_ai {
+                        let ret_obj = ai.get("retouch").unwrap_or(ai);
+                        let num = |obj: &Value, k1: &str, k2: &str| -> Option<f64> {
+                            obj.get(k1).or_else(|| obj.get(k2)).and_then(Value::as_f64).filter(|v| v.is_finite())
+                        };
+                        if let Some(v) = num(ret_obj, "skinSmooth", "skin_smooth") { r.skin_smooth = v.clamp(0.0, 100.0); }
+                        if let Some(v) = num(ret_obj, "skinTexture", "skin_texture") { r.skin_texture = v.clamp(0.0, 100.0); }
+                        if let Some(v) = num(ret_obj, "skinToneEven", "skin_tone_even") { r.skin_tone_even = v.clamp(0.0, 100.0); }
+                        if let Some(v) = num(ret_obj, "shineControl", "shine_control") { r.shine_control = v.clamp(0.0, 100.0); }
+                        if let Some(v) = num(ret_obj, "darkCircles", "dark_circles") { r.dark_circles = v.clamp(0.0, 100.0); }
+                        if let Some(v) = num(ret_obj, "wrinkleReduce", "wrinkle_reduce") { r.wrinkle_reduce = v.clamp(0.0, 100.0); }
+                        if let Some(v) = num(ret_obj, "skinRadiance", "skin_radiance") { r.skin_radiance = v.clamp(-100.0, 100.0); }
+                        if let Some(v) = num(ret_obj, "skinWarmth", "skin_warmth") { r.skin_warmth = v.clamp(-100.0, 100.0); }
+                        if let Some(v) = num(ret_obj, "skinRedness", "skin_redness") { r.skin_redness = v.clamp(-100.0, 100.0); }
+                        if let Some(v) = num(ret_obj, "eyeBrighten", "eye_brighten") { r.eye_brighten = v.clamp(0.0, 100.0); }
+                        if let Some(v) = num(ret_obj, "eyeWhiten", "eye_whiten") { r.eye_whiten = v.clamp(0.0, 100.0); }
+                        if let Some(v) = num(ret_obj, "eyeClarity", "eye_clarity") { r.eye_clarity = v.clamp(0.0, 100.0); }
+                        if let Some(v) = num(ret_obj, "eyebrowEnhance", "eyebrow_enhance") { r.eyebrow_enhance = v.clamp(-100.0, 100.0); }
+                        if let Some(v) = num(ret_obj, "teethWhiten", "teeth_whiten") { r.teeth_whiten = v.clamp(0.0, 100.0); }
+                        if let Some(v) = num(ret_obj, "lipEnhance", "lip_enhance") { r.lip_enhance = v.clamp(-100.0, 100.0); }
+                        if let Some(v) = num(ret_obj, "lipMoisture", "lip_moisture") { r.lip_moisture = v.clamp(0.0, 100.0); }
+                        if let Some(v) = num(ret_obj, "faceContour", "face_contour") { r.face_contour = v.clamp(0.0, 100.0); }
+                        if let Some(v) = num(ret_obj, "faceSlim", "face_slim") { r.face_slim = v.clamp(-100.0, 100.0); }
+                        if let Some(v) = num(ret_obj, "eyeEnlarge", "eye_enlarge") { r.eye_enlarge = v.clamp(-100.0, 100.0); }
+                        if let Some(v) = num(ret_obj, "noseSlim", "nose_slim") { r.nose_slim = v.clamp(-100.0, 100.0); }
+                        if let Some(v) = num(ret_obj, "chinLength", "chin_length") { r.chin_length = v.clamp(-100.0, 100.0); }
+                        if let Some(v) = num(ret_obj, "smileLift", "smile_lift") { r.smile_lift = v.clamp(-100.0, 100.0); }
+                        if let Some(v) = num(ret_obj, "hairLuster", "hair_luster") { r.hair_luster = v.clamp(0.0, 100.0); }
+                        if let Some(v) = num(ret_obj, "strayHair", "stray_hair") { r.stray_hair = v.clamp(0.0, 100.0); }
+                        if let Some(v) = num(ret_obj, "blemishSensitivity", "blemish_sensitivity") { r.blemish_sensitivity = v.clamp(0.0, 100.0); }
+
+                        let light_obj = ai.get("light").unwrap_or(ai);
+                        if let Some(v) = num(light_obj, "exposure", "exposure") { dd.light.exposure = v.clamp(-5.0, 5.0); }
+                        if let Some(v) = num(light_obj, "contrast", "contrast") { dd.light.contrast = v.clamp(-100.0, 100.0); }
+                        if let Some(v) = num(light_obj, "highlights", "highlights") { dd.light.highlights = v.clamp(-100.0, 100.0); }
+                        if let Some(v) = num(light_obj, "shadows", "shadows") { dd.light.shadows = v.clamp(-100.0, 100.0); }
+
+                        let color_obj = ai.get("color").unwrap_or(ai);
+                        if let Some(v) = num(color_obj, "vibrance", "vibrance") { dd.color.vibrance = v.clamp(-100.0, 100.0); }
+                        if let Some(v) = num(color_obj, "saturation", "saturation") { dd.color.saturation = v.clamp(-100.0, 100.0); }
+
+                        if summary.is_empty()
+                            && let Some(s_txt) = ai.get("summary").and_then(Value::as_str)
+                        {
+                            summary = s_txt.trim().to_string();
+                        }
+                    }
+
+                    if summary.is_empty() {
+                        let mode_tag = if parsed_ai.is_some() {
+                            "Gemini AI"
+                        } else if analysis.neural_detector {
+                            "YuNet ONNX + Oklab"
+                        } else {
+                            "Oklab AI"
+                        };
+                        summary = format!(
+                            "{mode_tag}: Smooth {:.0} · Even {:.0} · Shine {:.0} · Dark Circles {:.0} · Eyes {:.0}",
+                            r.skin_smooth, r.skin_tone_even, r.shine_control, r.dark_circles, r.eye_brighten
+                        );
+                    }
+
+                    dd.retouch = r;
+                    if let Some(op) = s.develop_op(id, dd, "AI Retouch Director") {
+                        ops.push(op);
+                    }
+                }
+
+                let changed = ops.len();
+                if !ops.is_empty() {
+                    s.commit("AI Retouch Director", lightcraft_catalog::Op::Batch { ops })?;
+                }
+                Ok(json!({
+                    "changed": changed,
+                    "summary": summary,
+                    "neural": any_neural,
+                }))
             }
         ),
         cmd!(
