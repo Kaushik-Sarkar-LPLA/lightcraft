@@ -1541,8 +1541,14 @@ pub fn specs() -> Vec<CommandSpec> {
                 let (verb, count) = if imported.is_empty() && !restored.is_empty() { ("Restore", restored.len()) } else { ("Add", imported.len()) };
                 s.merge_undo(n, &format!("{verb} {count} Photo{}", if count == 1 { "" } else { "s" }));
                 let imported = if imported.is_empty() { restored } else { imported };
-                if let Some(f) = imported.first() {
-                    s.selection = Selection::single(PhotoId(*f));
+                let selected_id = imported.first().copied().or_else(|| {
+                    report["duplicates"]
+                        .as_array()
+                        .and_then(|a| a.first())
+                        .and_then(|d| d["existing"].as_u64())
+                });
+                if let Some(f) = selected_id {
+                    s.selection = Selection::single(PhotoId(f));
                 }
                 Ok(report)
             }
