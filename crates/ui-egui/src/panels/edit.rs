@@ -418,10 +418,15 @@ pub fn show(app: &mut LightcraftApp, ui: &mut egui::Ui, id: PhotoId) {
                     ("retouchPresetMale", "lc.retouch-male", "Male", "High-texture skin cleanup, shine & redness reduction, and crisp eyes"),
                     ("retouchPresetBody", "lc.retouch-body", "Body Slim", "Overall body slimming, stomach flatten, waist cinch, arm slimming, and leg lengthening"),
                 ] {
-                    if text_button(ui, btn_id, crate::i18n::tr(label), false).on_hover_text(crate::i18n::tr(tip)).clicked()
-                        && let Err(e) = app.run("preset.apply", json!({"id": preset_id}))
-                    {
-                        app.toast(ui.ctx(), e);
+                    if text_button(ui, btn_id, crate::i18n::tr(label), false).on_hover_text(crate::i18n::tr(tip)).clicked() {
+                        let _ = app.run(
+                            "develop.merge",
+                            json!({"settings": {"retouch": lightcraft_develop::Retouch::default()}, "label": "Reset Retouch"}),
+                        );
+                        match app.run("preset.apply", json!({"id": preset_id})) {
+                            Ok(_) => app.toast(ui.ctx(), format!("Applied {label} retouch preset")),
+                            Err(e) => app.toast(ui.ctx(), e),
+                        }
                     }
                 }
                 if d.retouch.is_active()

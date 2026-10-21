@@ -816,10 +816,17 @@ pub fn specs() -> Vec<CommandSpec> {
 
                 for id in target_ids {
                     // the uncropped photo, so positions are the spots' own coordinates
-                    let Some(job) = s.render_job(id, 1600, 1600, false, false) else {
-                        continue;
-                    };
-                    let Ok(rendered) = job.run().rendered else {
+                    let rendered_opt = s
+                        .render_job(id, 1600, 1600, false, false)
+                        .and_then(|job| {
+                            let res = job.run();
+                            s.accept(&res);
+                            res.rendered.ok()
+                        })
+                        .or_else(|| s.quick_view_job(id, 1600, false).and_then(|q| q.run().rendered.ok()))
+                        .or_else(|| s.quick_view_job(id, 1600, true).and_then(|q| q.run().rendered.ok()))
+                        .or_else(|| s.thumb_job(id, 512).and_then(|job| job.run().rendered.ok()));
+                    let Some(rendered) = rendered_opt else {
                         continue;
                     };
                     let img = rendered.image;
@@ -925,9 +932,22 @@ pub fn specs() -> Vec<CommandSpec> {
                 };
 
                 let rendered_opt = s
-                    .render_job(id, 384, 384, false, true)
-                    .and_then(|job| job.run().rendered.ok())
-                    .or_else(|| s.thumb_job(id, 384).and_then(|job| job.run().rendered.ok()));
+                    .quick_view_job(id, 512, true)
+                    .and_then(|q| {
+                        let res = q.run();
+                        s.accept(&res);
+                        res.rendered.ok()
+                    })
+                    .or_else(|| {
+                        s.render_job(id, 384, 384, false, true).and_then(|job| {
+                            let res = job.run();
+                            s.accept(&res);
+                            res.rendered.ok()
+                        })
+                    })
+                    .or_else(|| s.thumb_job(id, 512).and_then(|job| job.run().rendered.ok()))
+                    .or_else(|| s.thumb_job(id, 384).and_then(|job| job.run().rendered.ok()))
+                    .or_else(|| s.thumb_job(id, 256).and_then(|job| job.run().rendered.ok()));
 
                 let (image_data_url, analysis) = if let Some(rendered) = rendered_opt {
                     let rgba = rendered.image;
@@ -1130,9 +1150,23 @@ pub fn specs() -> Vec<CommandSpec> {
 
                     if want_auto_retouch {
                         let base_settings = lightcraft_develop::DevelopSettings::default();
-                        let analysis = if let Some(job) = s.preview_job(id, 512, 512, false, &base_settings)
-                            && let Ok(rendered) = job.run().rendered
-                        {
+                        let rendered_opt = s
+                            .preview_job(id, 512, 512, false, &base_settings)
+                            .and_then(|job| {
+                                let res = job.run();
+                                s.accept(&res);
+                                res.rendered.ok()
+                            })
+                            .or_else(|| {
+                                s.quick_view_job(id, 512, true).and_then(|q| {
+                                    let res = q.run();
+                                    s.accept(&res);
+                                    res.rendered.ok()
+                                })
+                            })
+                            .or_else(|| s.thumb_job(id, 512).and_then(|job| job.run().rendered.ok()))
+                            .or_else(|| s.thumb_job(id, 384).and_then(|job| job.run().rendered.ok()));
+                        let analysis = if let Some(rendered) = rendered_opt {
                             let rgba = rendered.image;
                             let mut lin = lightcraft_raster::Rgb32f::new(rgba.width, rgba.height);
                             for (dst, src) in lin.data.iter_mut().zip(rgba.data.iter()) {
@@ -1159,23 +1193,24 @@ pub fn specs() -> Vec<CommandSpec> {
                             summary = "Reset all image adjustments to original.".to_string();
                         }
                         if q.contains("natural") || q.contains("subtle") || q.contains("light retouch") {
-                            r.skin_smooth = (r.skin_smooth.max(32.0) * 0.72).clamp(20.0, 50.0).round();
-                            r.skin_texture = 68.0;
+                            r.skin_smooth = (r.skin_smooth.max(42.0) * 0.85).clamp(35.0, 55.0).round();
+                            r.skin_texture = 48.0;
                             r.face_slim = 0.0;
                             r.eye_enlarge = 0.0;
                         }
                         if q.contains("glamour") || q.contains("beauty") || q.contains("flawless") || q.contains("smooth") {
-                            r.skin_smooth = (r.skin_smooth + 22.0).clamp(55.0, 88.0);
-                            r.skin_tone_even = (r.skin_tone_even + 18.0).clamp(50.0, 85.0);
-                            r.skin_radiance = (r.skin_radiance + 14.0).clamp(20.0, 55.0);
+                            r.skin_smooth = (r.skin_smooth + 24.0).clamp(62.0, 92.0);
+                            r.skin_texture = 38.0;
+                            r.skin_tone_even = (r.skin_tone_even + 20.0).clamp(55.0, 88.0);
+                            r.skin_radiance = (r.skin_radiance + 16.0).clamp(24.0, 58.0);
                         }
                         if q.contains("editorial") || q.contains("magazine") || q.contains("pore") || q.contains("texture") {
-                            r.skin_texture = 74.0;
-                            r.face_contour = (r.face_contour + 20.0).clamp(38.0, 75.0);
+                            r.skin_texture = 55.0;
+                            r.face_contour = (r.face_contour + 22.0).clamp(42.0, 78.0);
                         }
                         if q.contains("male") || q.contains("men") || q.contains("masculine") {
-                            r.skin_smooth = r.skin_smooth.clamp(25.0, 42.0);
-                            r.skin_texture = 78.0;
+                            r.skin_smooth = r.skin_smooth.clamp(32.0, 48.0);
+                            r.skin_texture = 56.0;
                             r.lip_enhance = 0.0;
                             r.lip_moisture = 0.0;
                             r.eye_enlarge = 0.0;

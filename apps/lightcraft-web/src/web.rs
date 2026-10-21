@@ -645,8 +645,7 @@ impl WebApp {
                     && !err.is_empty()
                 {
                     log::warn!("AI Retouch endpoint notice: {err}");
-                    let fallback_msg = if !prompt.is_empty()
-                        && let Ok(v) = self.app.run("retouch.aiApply", json!({"prompt": prompt, "allSelected": all_sel}))
+                    let fallback_msg = if let Ok(v) = self.app.run("retouch.aiApply", json!({"prompt": prompt, "allSelected": all_sel}))
                         && let Some(s) = v.get("summary").and_then(serde_json::Value::as_str)
                         && !s.is_empty()
                     {
