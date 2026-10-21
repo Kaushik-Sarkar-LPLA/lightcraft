@@ -172,7 +172,7 @@
               prompt: req.prompt || "",
               allSelected: !!req.allSelected,
               blemishNote,
-              beforeSettings: t.currentSettings || null
+              beforeSettings: tel.current || null
             }));
           } else {
             await command("retouch.aiDone", JSON.stringify({

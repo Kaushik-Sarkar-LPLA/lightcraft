@@ -161,6 +161,7 @@ struct Busy {
     level: SourceLevel,
     key: u64,
     cache: Option<(Arc<PreviewCache>, Hash128)>,
+    view_cache: Option<(Arc<PreviewCache>, Hash128)>,
     /// A slideshow slide: the worker renders the photo, it is composed here when it comes back.
     slide: Option<Arc<lightcraft_engine::slide::SlideCompose>>,
 }
@@ -360,6 +361,13 @@ impl Workers {
                 }
             }
         }
+        if let Ok(r) = &rendered
+            && let Some((vcache, vkey)) = &b.view_cache
+            && vcache.generation() == b.cache_generation
+            && b.namespace == g.index.namespace()
+        {
+            vcache.put_at(b.cache_generation, *vkey, Arc::new(r.image.clone()));
+        }
         g.affinity.insert((b.photo, b.level), i);
         // A cleared worker may finish writing after the initial deletion. Its old namespace
         // is never reused, so removing this file cannot delete a replacement's cache entry.
@@ -502,6 +510,7 @@ impl RenderOffload for Workers {
             level: job.level,
             key: job.key,
             cache: job.cache,
+            view_cache: job.view_cache,
             slide: job.slide,
         });
         None

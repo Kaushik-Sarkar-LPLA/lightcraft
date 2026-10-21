@@ -1139,9 +1139,10 @@ pub fn specs() -> Vec<CommandSpec> {
                     let mut r = dd.retouch.clone();
                     let q = prompt.to_ascii_lowercase();
 
-                    let want_auto_retouch = q.is_empty()
-                        || actions.iter().any(|a| a == "autoretouch" || a == "auto_retouch")
-                        || (!dd.retouch.is_active()
+                    let want_auto_retouch = (parsed_ai.is_none() && q.is_empty())
+                        || (!dd.retouch.is_active() && actions.iter().any(|a| a == "autoretouch" || a == "auto_retouch"))
+                        || (parsed_ai.is_none()
+                            && !dd.retouch.is_active()
                             && (q.contains("retouch")
                                 || q.contains("beautif")
                                 || q.contains("portrait")
@@ -1187,8 +1188,8 @@ pub fn specs() -> Vec<CommandSpec> {
                         r = analysis.recommended;
                     }
 
-                    // Run local keyword heuristics as a baseline before overlaying any structured AI JSON response:
-                    if !q.is_empty() {
+                    // Run local keyword heuristics when no structured AI JSON response was provided:
+                    if parsed_ai.is_none() && !q.is_empty() {
                         if q.contains("reset") || q.contains("original") || q.contains("clear all") {
                             dd = lightcraft_develop::DevelopSettings::default();
                             r = lightcraft_develop::Retouch::default();

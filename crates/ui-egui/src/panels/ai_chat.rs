@@ -114,7 +114,12 @@ pub fn send_message(app: &mut LightcraftApp, ctx: &egui::Context, prompt: &str, 
             || lower.starts_with("tell me")
             || lower.ends_with('?');
         if !is_question {
-            let _ = app.run("retouch.aiApply", json!({"prompt": clean_prompt, "allSelected": all_selected}));
+            if let Ok(r) = app.run("retouch.aiApply", json!({"prompt": clean_prompt, "allSelected": all_selected}))
+                && let Some(s) = r.get("summary").and_then(serde_json::Value::as_str)
+                && !s.is_empty()
+            {
+                app.toast(ctx, s);
+            }
         }
         let history: Vec<serde_json::Value> = app
             .ui
