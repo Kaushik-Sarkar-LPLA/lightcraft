@@ -3,6 +3,10 @@
 // WebAssembly.Module and the storage backend kind; the module then takes over `onmessage`.
 import init, { worker_main } from "./lightcraft_web.js";
 
+self.onunhandledrejection = (e) => {
+  setTimeout(() => { throw e.reason || new Error("worker unhandled rejection"); });
+};
+
 self.onmessage = async (e) => {
   self.onmessage = null;
   try {

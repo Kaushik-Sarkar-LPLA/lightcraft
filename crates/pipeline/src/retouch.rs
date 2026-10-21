@@ -56,10 +56,10 @@ pub fn skin_weight(lab: [f32; 3]) -> f32 {
     // (a, b) chroma than sRGB, so keep the lower chroma/lightness ramps generous while still
     // rejecting negative-a sky and foliage.
     let c = a.hypot(b);
-    let hue = b.atan2(a); // radians; human skin clusters around -0.25..1.48 rad (~-14°..85°)
-    let w_l = smoothstep(0.05, 0.16, l) * (1.0 - smoothstep(0.92, 0.995, l));
-    let w_c = smoothstep(0.003, 0.013, c) * (1.0 - smoothstep(0.24, 0.36, c));
-    let w_h = smoothstep(-0.32, 0.06, hue) * (1.0 - smoothstep(1.30, 1.56, hue));
+    let hue = b.atan2(a); // radians; human skin clusters around -0.35..1.50 rad (~-20°..86°)
+    let w_l = smoothstep(0.04, 0.14, l) * (1.0 - smoothstep(0.95, 0.999, l));
+    let w_c = smoothstep(0.0018, 0.009, c) * (1.0 - smoothstep(0.26, 0.38, c));
+    let w_h = smoothstep(-0.38, 0.02, hue) * (1.0 - smoothstep(1.36, 1.56, hue));
     (w_l * w_c * w_h).clamp(0.0, 1.0)
 }
 
@@ -71,9 +71,9 @@ pub fn lip_weight(lab: [f32; 3]) -> f32 {
     if !l.is_finite() || !a.is_finite() || !b.is_finite() {
         return 0.0;
     }
-    let w_l = smoothstep(0.12, 0.24, l) * (1.0 - smoothstep(0.82, 0.92, l));
-    let w_a = smoothstep(0.016, 0.044, a);
-    let w_rose = smoothstep(-0.020, 0.012, a - b * 0.65);
+    let w_l = smoothstep(0.10, 0.22, l) * (1.0 - smoothstep(0.86, 0.96, l));
+    let w_a = smoothstep(0.014, 0.040, a);
+    let w_rose = smoothstep(-0.024, 0.010, a - b * 0.65);
     (w_l * w_a * w_rose).clamp(0.0, 1.0)
 }
 
@@ -86,10 +86,10 @@ pub fn teeth_weight(lab: [f32; 3], detail: f32) -> f32 {
         return 0.0;
     }
     let c = a.hypot(b);
-    let w_l = smoothstep(0.32, 0.50, l) * (1.0 - smoothstep(0.97, 0.999, l));
-    let w_c = 1.0 - smoothstep(0.065, 0.145, c);
-    let w_a = 1.0 - smoothstep(0.028, 0.062, a.abs());
-    let w_b = smoothstep(-0.030, -0.004, b) * (1.0 - smoothstep(0.115, 0.180, b));
+    let w_l = smoothstep(0.30, 0.48, l) * (1.0 - smoothstep(0.97, 0.999, l));
+    let w_c = 1.0 - smoothstep(0.070, 0.155, c);
+    let w_a = 1.0 - smoothstep(0.032, 0.068, a.abs());
+    let w_b = smoothstep(-0.035, -0.004, b) * (1.0 - smoothstep(0.125, 0.190, b));
     let w_edge = 0.55 + 0.45 * smoothstep(0.002, 0.024, detail);
     (w_l * w_c * w_a * w_b * w_edge).clamp(0.0, 1.0)
 }
@@ -102,9 +102,57 @@ pub fn sclera_weight(lab: [f32; 3], w_skin: f32) -> f32 {
         return 0.0;
     }
     let c = a.hypot(b);
-    let w_l = smoothstep(0.24, 0.42, l) * (1.0 - smoothstep(0.97, 0.998, l));
-    let w_c = 1.0 - smoothstep(0.045, 0.095, c);
+    let w_l = smoothstep(0.22, 0.40, l) * (1.0 - smoothstep(0.97, 0.999, l));
+    let w_c = 1.0 - smoothstep(0.050, 0.105, c);
     (w_l * w_c * (1.0 - 0.65 * w_skin)).clamp(0.0, 1.0)
+}
+
+/// Compute an exposure-aware Oklab gain using the upper-half foreground lightness (`fg_mean_l`)
+/// rather than the whole-image mean so dark studio/night backgrounds never over-boost the subject's face.
+#[inline]
+fn compute_cbrt_gain(l_plane: &Plane, exp_ev: f32) -> f32 {
+    let exp_cbrt = exp_ev.clamp(-4.0, 4.0).exp2().cbrt();
+    let n = l_plane.data.len();
+    if n == 0 {
+        return exp_cbrt.clamp(0.5, 2.0);
+    }
+    let step = (n / 4096).max(1);
+    let mut sum_all = 0.0f64;
+    let mut cnt_all = 0usize;
+    for &l in l_plane.data.iter().step_by(step) {
+        if l.is_finite() {
+            sum_all += f64::from(l);
+            cnt_all += 1;
+        }
+    }
+    let mean_l = if cnt_all > 0 { (sum_all / cnt_all as f64) as f32 } else { 0.5 };
+    let mut sum_fg = 0.0f64;
+    let mut cnt_fg = 0usize;
+    for &l in l_plane.data.iter().step_by(step) {
+        if l.is_finite() && l >= mean_l {
+            sum_fg += f64::from(l);
+            cnt_fg += 1;
+        }
+    }
+    let fg_mean_l = if cnt_fg > 0 { (sum_fg / cnt_fg as f64) as f32 } else { mean_l };
+    let effective_fg = fg_mean_l * exp_cbrt;
+    if effective_fg > 1e-3 && effective_fg < 0.36 {
+        (exp_cbrt * (0.46 / effective_fg)).clamp(0.5, 1.75)
+    } else {
+        exp_cbrt.clamp(0.5, 1.75)
+    }
+}
+
+/// Evaluate exposure-normalized Oklab `[L, a, b]` without ever pushing non-clipped skin (`l0 < 0.88`)
+/// into the specular highlight rejection zone (`> 0.95`).
+#[inline]
+fn eval_lab(l0: f32, a0: f32, b0: f32, cbrt_gain: f32) -> [f32; 3] {
+    let l_eval = if cbrt_gain > 1.0 && l0 < 0.88 {
+        (l0 * cbrt_gain).min(0.88)
+    } else {
+        l0 * cbrt_gain
+    };
+    [l_eval, a0 * cbrt_gain, b0 * cbrt_gain]
 }
 
 /// Quantitative portrait & skin telemetry extracted by YuNet ONNX + Oklab frequency separation
@@ -163,51 +211,77 @@ fn detect_neural_faces_cached(img: &Rgb32f) -> Vec<lightcraft_faces::yunet::Face
         return faces.clone();
     }
 
-    // Downsample to <= 288 px long edge and auto-normalize exposure to 8-bit sRGB for YuNet inference (~2 ms).
+    // Downsample to <= 288 px long edge and convert linear Rec.2020 to 8-bit sRGB for YuNet inference (~2 ms).
     let max_edge = 288usize;
     let scale = (max_edge as f32 / w.max(h) as f32).min(1.0);
     let dw = ((w as f32 * scale).round() as usize).max(32);
     let dh = ((h as f32 * scale).round() as usize).max(32);
-    let mut sum_lum = 0.0f64;
     let total_px = (dw * dh).max(1);
-    for y in (0..dh).step_by(2) {
-        let sy = ((y * h) / dh).min(h - 1);
-        let row = sy * w;
-        for x in (0..dw).step_by(2) {
-            let sx = ((x * w) / dw).min(w - 1);
-            let px = img.data.get(row + sx).copied().unwrap_or([0.0; 3]);
-            let lum = 0.2627 * px[0].max(0.0) + 0.6780 * px[1].max(0.0) + 0.0593 * px[2].max(0.0);
-            if lum.is_finite() {
-                sum_lum += f64::from(lum.min(2.0));
+
+    let build_srgb = |gain: f32| -> Vec<u8> {
+        let mut out = Vec::with_capacity(total_px * 3);
+        for y in 0..dh {
+            let sy = ((y * h) / dh).min(h - 1);
+            let row = sy * w;
+            for x in 0..dw {
+                let sx = ((x * w) / dw).min(w - 1);
+                let px = img.data.get(row + sx).copied().unwrap_or([0.0; 3]);
+                let r = ((px[0].max(0.0) * gain).clamp(0.0, 1.0).powf(0.4545) * 255.0).round() as u8;
+                let g = ((px[1].max(0.0) * gain).clamp(0.0, 1.0).powf(0.4545) * 255.0).round() as u8;
+                let b = ((px[2].max(0.0) * gain).clamp(0.0, 1.0).powf(0.4545) * 255.0).round() as u8;
+                out.push(r);
+                out.push(g);
+                out.push(b);
             }
         }
-    }
-    let mean_lum = (sum_lum / ((total_px / 4).max(1) as f64)) as f32;
-    let norm_gain = if mean_lum > 1e-4 && mean_lum < 0.14 {
-        (0.18 / mean_lum).clamp(1.0, 8.0)
-    } else {
-        1.0
+        out
     };
 
-    let mut rgb = Vec::with_capacity(total_px * 3);
-    for y in 0..dh {
-        let sy = ((y * h) / dh).min(h - 1);
-        let row = sy * w;
-        for x in 0..dw {
-            let sx = ((x * w) / dw).min(w - 1);
-            let px = img.data.get(row + sx).copied().unwrap_or([0.0; 3]);
-            // Convert linear Rec.2020 through gamma ~2.2 to approximate display sRGB 0..255
-            let r = ((px[0].max(0.0) * norm_gain).clamp(0.0, 1.0).powf(0.4545) * 255.0).round() as u8;
-            let g = ((px[1].max(0.0) * norm_gain).clamp(0.0, 1.0).powf(0.4545) * 255.0).round() as u8;
-            let b = ((px[2].max(0.0) * norm_gain).clamp(0.0, 1.0).powf(0.4545) * 255.0).round() as u8;
-            rgb.push(r);
-            rgb.push(g);
-            rgb.push(b);
+    let opts = lightcraft_faces::yunet::Options { score: 0.36, nms_iou: 0.3, max_faces: 12 };
+    let rgb = build_srgb(1.0);
+    let mut faces = detector.detect(&rgb, dw, dh, &opts).unwrap_or_default();
+
+    // Only if direct sRGB found 0 faces, check whether the foreground itself is severely underexposed (e.g. dark RAW)
+    if faces.is_empty() {
+        let mut sum_lum = 0.0f64;
+        let mut cnt = 0usize;
+        for y in (0..dh).step_by(2) {
+            let sy = ((y * h) / dh).min(h - 1);
+            let row = sy * w;
+            for x in (0..dw).step_by(2) {
+                let sx = ((x * w) / dw).min(w - 1);
+                let px = img.data.get(row + sx).copied().unwrap_or([0.0; 3]);
+                let lum = 0.2627 * px[0].max(0.0) + 0.6780 * px[1].max(0.0) + 0.0593 * px[2].max(0.0);
+                if lum.is_finite() {
+                    sum_lum += f64::from(lum.min(2.0));
+                    cnt += 1;
+                }
+            }
+        }
+        let mean_lum = if cnt > 0 { (sum_lum / cnt as f64) as f32 } else { 0.18 };
+        let mut sum_fg = 0.0f64;
+        let mut cnt_fg = 0usize;
+        for y in (0..dh).step_by(2) {
+            let sy = ((y * h) / dh).min(h - 1);
+            let row = sy * w;
+            for x in (0..dw).step_by(2) {
+                let sx = ((x * w) / dw).min(w - 1);
+                let px = img.data.get(row + sx).copied().unwrap_or([0.0; 3]);
+                let lum = 0.2627 * px[0].max(0.0) + 0.6780 * px[1].max(0.0) + 0.0593 * px[2].max(0.0);
+                if lum.is_finite() && lum >= mean_lum {
+                    sum_fg += f64::from(lum.min(2.0));
+                    cnt_fg += 1;
+                }
+            }
+        }
+        let fg_lum = if cnt_fg > 0 { (sum_fg / cnt_fg as f64) as f32 } else { mean_lum };
+        if fg_lum > 1e-4 && fg_lum < 0.22 {
+            let gain = (0.42 / fg_lum).clamp(1.25, 5.5);
+            let rgb_boost = build_srgb(gain);
+            faces = detector.detect(&rgb_boost, dw, dh, &opts).unwrap_or_default();
         }
     }
 
-    let opts = lightcraft_faces::yunet::Options { score: 0.38, nms_iou: 0.3, max_faces: 12 };
-    let faces = detector.detect(&rgb, dw, dh, &opts).unwrap_or_default();
     let mut guard = CACHE.lock().unwrap_or_else(PoisonError::into_inner);
     guard.retain(|(k, _)| *k != hash);
     if guard.len() >= 16 {
@@ -235,44 +309,54 @@ struct FaceZone {
 }
 
 impl FaceZone {
-    /// Locate the primary face and 5 anatomical landmarks via embedded YuNet ONNX neural inference,
-    /// falling back smoothly to Oklab skin/lip moments when no neural face is detected.
-    fn detect(img: &Rgb32f, w: usize, h: usize, skin: &Plane, a_plane: &Plane, b_plane: &Plane, l_plane: &Plane) -> Self {
-        let (wf, hf) = (w.max(1) as f32, h.max(1) as f32);
-
-        // 1. Try YuNet ONNX neural face + 5-landmark detector first.
-        let neural_faces = detect_neural_faces_cached(img);
-        if let Some(best) = neural_faces.iter().max_by(|a, b| {
-            let area_a = (a.x1 - a.x0) * (a.y1 - a.y0) * a.score;
-            let area_b = (b.x1 - b.x0) * (b.y1 - b.y0) * b.score;
-            area_a.total_cmp(&area_b)
-        }) {
-            let cx = ((best.x0 + best.x1) * 0.5 * wf).clamp(0.0, wf);
-            let cy = ((best.y0 + best.y1) * 0.5 * hf).clamp(0.0, hf);
-            let rx = ((best.x1 - best.x0) * 0.54 * wf).max(8.0);
-            let ry = ((best.y1 - best.y0) * 0.56 * hf).max(8.0);
-            let right_eye = (best.landmarks[0].0.clamp(0.0, 1.0) * wf, best.landmarks[0].1.clamp(0.0, 1.0) * hf);
-            let left_eye = (best.landmarks[1].0.clamp(0.0, 1.0) * wf, best.landmarks[1].1.clamp(0.0, 1.0) * hf);
-            let nose_tip = (best.landmarks[2].0.clamp(0.0, 1.0) * wf, best.landmarks[2].1.clamp(0.0, 1.0) * hf);
-            let mouth_right = (best.landmarks[3].0.clamp(0.0, 1.0) * wf, best.landmarks[3].1.clamp(0.0, 1.0) * hf);
-            let mouth_left = (best.landmarks[4].0.clamp(0.0, 1.0) * wf, best.landmarks[4].1.clamp(0.0, 1.0) * hf);
-            let mouth_y = (mouth_right.1 + mouth_left.1) * 0.5;
-            return Self {
-                cx,
-                cy,
-                rx,
-                ry,
-                right_eye,
-                left_eye,
-                nose_tip,
-                mouth_right,
-                mouth_left,
-                mouth_y,
-                neural: true,
-            };
+    #[inline]
+    fn from_yunet(best: &lightcraft_faces::yunet::Face, wf: f32, hf: f32) -> Self {
+        let cx = ((best.x0 + best.x1) * 0.5 * wf).clamp(0.0, wf);
+        let cy = ((best.y0 + best.y1) * 0.5 * hf).clamp(0.0, hf);
+        let rx = ((best.x1 - best.x0) * 0.54 * wf).max(8.0);
+        let ry = ((best.y1 - best.y0) * 0.56 * hf).max(8.0);
+        let right_eye = (best.landmarks[0].0.clamp(0.0, 1.0) * wf, best.landmarks[0].1.clamp(0.0, 1.0) * hf);
+        let left_eye = (best.landmarks[1].0.clamp(0.0, 1.0) * wf, best.landmarks[1].1.clamp(0.0, 1.0) * hf);
+        let nose_tip = (best.landmarks[2].0.clamp(0.0, 1.0) * wf, best.landmarks[2].1.clamp(0.0, 1.0) * hf);
+        let mouth_right = (best.landmarks[3].0.clamp(0.0, 1.0) * wf, best.landmarks[3].1.clamp(0.0, 1.0) * hf);
+        let mouth_left = (best.landmarks[4].0.clamp(0.0, 1.0) * wf, best.landmarks[4].1.clamp(0.0, 1.0) * hf);
+        let mouth_y = (mouth_right.1 + mouth_left.1) * 0.5;
+        Self {
+            cx,
+            cy,
+            rx,
+            ry,
+            right_eye,
+            left_eye,
+            nose_tip,
+            mouth_right,
+            mouth_left,
+            mouth_y,
+            neural: true,
         }
+    }
 
-        // 2. Fallback: Oklab skin/lip statistical moments (for close-up skin crops or non-frontal portraits).
+    /// Detect up to 6 faces sorted by prominence (`area * score`), falling back to statistical Oklab moments.
+    fn detect_all(img: &Rgb32f, w: usize, h: usize, skin: &Plane, a_plane: &Plane, b_plane: &Plane, l_plane: &Plane) -> Vec<Self> {
+        let (wf, hf) = (w.max(1) as f32, h.max(1) as f32);
+        let mut neural_faces = detect_neural_faces_cached(img);
+        if !neural_faces.is_empty() {
+            neural_faces.sort_by(|a, b| {
+                let area_a = (a.x1 - a.x0) * (a.y1 - a.y0) * a.score;
+                let area_b = (b.x1 - b.x0) * (b.y1 - b.y0) * b.score;
+                area_b.total_cmp(&area_a)
+            });
+            return neural_faces
+                .iter()
+                .take(6)
+                .map(|f| Self::from_yunet(f, wf, hf))
+                .collect();
+        }
+        vec![Self::detect_fallback(w, h, skin, a_plane, b_plane, l_plane)]
+    }
+
+    fn detect_fallback(w: usize, h: usize, skin: &Plane, a_plane: &Plane, b_plane: &Plane, l_plane: &Plane) -> Self {
+        let (wf, hf) = (w.max(1) as f32, h.max(1) as f32);
         let (mut sum_w, mut sum_x, mut sum_y) = (0.0f64, 0.0f64, 0.0f64);
         let step = (w.min(h) / 64).max(1);
         for y in (0..h).step_by(step) {
@@ -457,13 +541,9 @@ pub fn analyze_portrait(img: &Rgb32f) -> PortraitAnalysis {
     let mut a_plane = Plane::new(w, h);
     let mut b_plane = Plane::new(w, h);
     let mut mask_plane = Plane::new(w, h);
-    let mut sum_l_all = 0.0f64;
     for i in 0..n {
         if let Some(&rgb) = img.data.get(i) {
             let lab = oklab_from_2020([rgb[0].max(0.0), rgb[1].max(0.0), rgb[2].max(0.0)]);
-            if lab[0].is_finite() {
-                sum_l_all += f64::from(lab[0]);
-            }
             if let Some(v) = l_plane.data.get_mut(i) {
                 *v = lab[0];
             }
@@ -475,18 +555,14 @@ pub fn analyze_portrait(img: &Rgb32f) -> PortraitAnalysis {
             }
         }
     }
-    let mean_l = (sum_l_all / (n.max(1) as f64)) as f32;
-    let cbrt_gain = if mean_l > 1e-3 && mean_l < 0.45 {
-        (0.52 / mean_l).clamp(1.0, 2.2)
-    } else {
-        1.0
-    };
+    let cbrt_gain = compute_cbrt_gain(&l_plane, 0.0);
     for i in 0..n {
-        let lab = [
-            l_plane.data.get(i).copied().unwrap_or(0.0) * cbrt_gain,
-            a_plane.data.get(i).copied().unwrap_or(0.0) * cbrt_gain,
-            b_plane.data.get(i).copied().unwrap_or(0.0) * cbrt_gain,
-        ];
+        let lab = eval_lab(
+            l_plane.data.get(i).copied().unwrap_or(0.0),
+            a_plane.data.get(i).copied().unwrap_or(0.0),
+            b_plane.data.get(i).copied().unwrap_or(0.0),
+            cbrt_gain,
+        );
         if let Some(v) = mask_plane.data.get_mut(i) {
             *v = skin_weight(lab);
         }
@@ -495,12 +571,13 @@ pub fn analyze_portrait(img: &Rgb32f) -> PortraitAnalysis {
     let long = w.max(h) as f32;
     let skin_mask = gaussian(&mask_plane, (long * 0.003).clamp(1.0, 6.0));
     let neural_faces = detect_neural_faces_cached(img);
-    let fz = FaceZone::detect(img, w, h, &skin_mask, &a_plane, &b_plane, &l_plane);
+    let faces = FaceZone::detect_all(img, w, h, &skin_mask, &a_plane, &b_plane, &l_plane);
+    let fz = faces[0];
 
-    let fine_sigma = (long * 0.0008).clamp(0.6, 2.2);
-    let mid_sigma = (long * 0.020).clamp(3.0, 42.0);
+    let fine_sigma = (long * 0.0018).clamp(0.8, 3.0);
+    let mid_sigma = (long * 0.024).clamp(4.0, 48.0);
     let low_in = gaussian(&l_plane, fine_sigma);
-    let base_l = guided_fast(&low_in, mid_sigma, 0.022);
+    let base_l = guided_fast(&low_in, mid_sigma, 0.015);
 
     let (wf, hf) = (w as f32, h as f32);
     let step = (w.min(h) / 96).max(1);
@@ -523,17 +600,31 @@ pub fn analyze_portrait(img: &Rgb32f) -> PortraitAnalysis {
 
     for y in (0..h).step_by(step) {
         let py = y as f32 + 0.5;
-        let v_face = (py - fz.cy) / fz.ry;
         let row = y * w;
         for x in (0..w).step_by(step) {
             total_samples += 1.0;
             let px_x = x as f32 + 0.5;
-            let u_face = (px_x - fz.cx) / fz.rx;
+            let mut best_fz = &faces[0];
+            if faces.len() > 1 {
+                let mut best_d2 = f32::MAX;
+                for f in &faces {
+                    let du = (px_x - f.cx) / f.rx;
+                    let dv = (py - f.cy) / f.ry;
+                    let d2 = du * du + dv * dv;
+                    if d2 < best_d2 {
+                        best_d2 = d2;
+                        best_fz = f;
+                    }
+                }
+            }
+            let u_face = (px_x - best_fz.cx) / best_fz.rx;
+            let v_face = (py - best_fz.cy) / best_fz.ry;
             let in_face = bell2(u_face / 1.25, v_face / 1.35);
-            if in_face <= 1e-3 {
+            let i = row + x;
+            let raw_skin = skin_mask.data.get(i).copied().unwrap_or(0.0);
+            if in_face <= 1e-3 && raw_skin <= 0.25 {
                 continue;
             }
-            let i = row + x;
             let l0 = l_plane.data.get(i).copied().unwrap_or(0.0);
             let low = low_in.data.get(i).copied().unwrap_or(l0);
             let base = base_l.data.get(i).copied().unwrap_or(low);
@@ -542,9 +633,9 @@ pub fn analyze_portrait(img: &Rgb32f) -> PortraitAnalysis {
             let high = l0 - low;
             let mid = low - base;
             let detail = high.abs() + 0.5 * mid.abs();
-            let lab_eval = [l0 * cbrt_gain, a0 * cbrt_gain, b0 * cbrt_gain];
-            let face_floor = 0.55 * bell2(u_face / 0.90, (v_face - 0.04) / 1.0) * smoothstep(0.12, 0.25, lab_eval[0]);
-            let ws = ((skin_mask.data.get(i).copied().unwrap_or(0.0) * in_face).max(face_floor)).clamp(0.0, 1.0);
+            let lab_eval = eval_lab(l0, a0, b0, cbrt_gain);
+            let face_floor = 0.65 * bell2(u_face / 0.95, (v_face - 0.04) / 1.05) * smoothstep(0.10, 0.24, lab_eval[0]);
+            let ws = (raw_skin * in_face.max(0.55)).max(face_floor).clamp(0.0, 1.0);
 
             if ws > 0.15 {
                 let sw = f64::from(ws);
@@ -741,7 +832,10 @@ fn clean_s11(v: f64) -> f32 {
 /// (`face_slim`, `eye_enlarge`, `nose_slim`, `chin_length`, `smile_lift`, `body_slim`,
 /// `waist_slim`, `stomach_flat`, `hip_enhance`, `shoulder_width`, `arm_slim`, `neck_slim`,
 /// `chest_enhance`, `leg_length`).
-fn apply_reshape_warp(img: &mut Rgb32f, r: &Retouch, fz: &FaceZone) {
+fn apply_reshape_warp(img: &mut Rgb32f, r: &Retouch, faces: &[FaceZone]) {
+    if faces.is_empty() {
+        return;
+    }
     let face_slim = clean_s11(r.face_slim);
     let eye_enlarge = clean_s11(r.eye_enlarge);
     let nose_slim = clean_s11(r.nose_slim);
@@ -807,44 +901,57 @@ fn apply_reshape_warp(img: &mut Rgb32f, r: &Retouch, fz: &FaceZone) {
         out
     };
 
-    let (cx, cy, rx, ry) = (fz.cx, fz.cy, fz.rx, fz.ry);
-    let eye_rx = (rx * 0.28).max(4.0);
-    let eye_ry = (ry * 0.22).max(4.0);
-    let (nose_x, nose_y) = fz.nose_tip;
-    let nose_rx = (rx * 0.36).max(4.0);
-    let nose_ry = (ry * 0.30).max(4.0);
-    let chin_y = cy + ry * 0.82;
-    let chin_rx = (rx * 0.72).max(4.0);
-    let chin_ry = (ry * 0.48).max(4.0);
-    let smile_rx = (rx * 0.28).max(4.0);
-    let smile_ry = (ry * 0.26).max(4.0);
-
-    // Anthropometric body proportions strictly anchored below the chin (adaptive to half-body, 3/4, or full-body shots).
-    let chin_bottom = cy + ry * 0.96;
-    let below_chin = (hf - chin_bottom).max(ry * 0.8);
-    let body_h = (1.55 * ry).min(below_chin * 0.28).max(ry * 0.65).max(8.0);
-    let body_rx = (rx * 2.25).clamp(wf * 0.18, wf * 0.46).max(8.0);
-    let neck_y = chin_bottom + 0.22 * body_h;
-    let shoulder_y = chin_bottom + 0.62 * body_h;
-    let chest_y = chin_bottom + 1.25 * body_h;
-    let arm_y = chin_bottom + 1.65 * body_h;
-    let waist_y = chin_bottom + 2.15 * body_h;
-    let hip_y = chin_bottom + 2.95 * body_h;
-    let leg_y0 = chin_bottom + 2.80 * body_h;
-
     for_rows(&mut img.data, w, |y, row| {
         let py = y as f32 + 0.5;
-        let v = (py - cy) / ry;
-        if !has_body_warp && v.abs() > 1.50 {
+        if !has_body_warp && faces.iter().all(|f| ((py - f.cy) / f.ry).abs() > 1.50) {
             return;
         }
-        if !has_face_warp && py < chin_bottom - ry * 0.35 {
+        if !has_face_warp && faces.iter().all(|f| py < (f.cy + f.ry * 0.96) - f.ry * 0.35) {
             return;
         }
 
         for (x, px) in row.iter_mut().enumerate() {
             let px_x = x as f32 + 0.5;
+            let mut fz = &faces[0];
+            if faces.len() > 1 {
+                let mut best_d2 = f32::MAX;
+                for f in faces {
+                    let du = (px_x - f.cx) / f.rx;
+                    let dv = (py - f.cy) / f.ry;
+                    let d2 = du * du + dv * dv;
+                    if d2 < best_d2 {
+                        best_d2 = d2;
+                        fz = f;
+                    }
+                }
+            }
+
+            let (cx, cy, rx, ry) = (fz.cx, fz.cy, fz.rx, fz.ry);
+            let eye_rx = (rx * 0.28).max(4.0);
+            let eye_ry = (ry * 0.22).max(4.0);
+            let (nose_x, nose_y) = fz.nose_tip;
+            let nose_rx = (rx * 0.36).max(4.0);
+            let nose_ry = (ry * 0.30).max(4.0);
+            let chin_y = cy + ry * 0.82;
+            let chin_rx = (rx * 0.72).max(4.0);
+            let chin_ry = (ry * 0.48).max(4.0);
+            let smile_rx = (rx * 0.28).max(4.0);
+            let smile_ry = (ry * 0.26).max(4.0);
+
+            let chin_bottom = cy + ry * 0.96;
+            let below_chin = (hf - chin_bottom).max(ry * 0.8);
+            let body_h = (1.55 * ry).min(below_chin * 0.28).max(ry * 0.65).max(8.0);
+            let body_rx = (rx * 2.25).clamp(wf * 0.18, wf * 0.46).max(8.0);
+            let neck_y = chin_bottom + 0.22 * body_h;
+            let shoulder_y = chin_bottom + 0.62 * body_h;
+            let chest_y = chin_bottom + 1.25 * body_h;
+            let arm_y = chin_bottom + 1.65 * body_h;
+            let waist_y = chin_bottom + 2.15 * body_h;
+            let hip_y = chin_bottom + 2.95 * body_h;
+            let leg_y0 = chin_bottom + 2.80 * body_h;
+
             let u = (px_x - cx) / rx;
+            let v = (py - cy) / ry;
             let mut dx = 0.0f32;
             let mut dy = 0.0f32;
 
@@ -1059,14 +1166,9 @@ pub fn apply(img: &mut Rgb32f, s: &DevelopSettings, px_per_long: f64) {
     // Evaluate Oklab planes and compute an exposure-normalized gain so under/over-exposed scene-linear
     // images still land squarely inside the perceptual skin/lip/teeth/sclera loci.
     let exp_ev = if s.light.exposure.is_finite() { s.light.exposure as f32 } else { 0.0 };
-    let exp_cbrt = exp_ev.clamp(-4.0, 4.0).exp2().cbrt();
-    let mut sum_l_all = 0.0f64;
     for i in 0..n {
         if let Some(&rgb) = img.data.get(i) {
             let lab = oklab_from_2020([rgb[0].max(0.0), rgb[1].max(0.0), rgb[2].max(0.0)]);
-            if lab[0].is_finite() {
-                sum_l_all += f64::from(lab[0]);
-            }
             if let Some(v) = l_plane.data.get_mut(i) {
                 *v = lab[0];
             }
@@ -1078,18 +1180,14 @@ pub fn apply(img: &mut Rgb32f, s: &DevelopSettings, px_per_long: f64) {
             }
         }
     }
-    let mean_l = (sum_l_all / (n.max(1) as f64)) as f32 * exp_cbrt;
-    let cbrt_gain = if mean_l > 1e-3 && mean_l < 0.45 {
-        (exp_cbrt * (0.52 / mean_l)).clamp(0.5, 2.5)
-    } else {
-        exp_cbrt.clamp(0.5, 2.5)
-    };
+    let cbrt_gain = compute_cbrt_gain(&l_plane, exp_ev);
     for i in 0..n {
-        let lab_eval = [
-            l_plane.data.get(i).copied().unwrap_or(0.0) * cbrt_gain,
-            a_plane.data.get(i).copied().unwrap_or(0.0) * cbrt_gain,
-            b_plane.data.get(i).copied().unwrap_or(0.0) * cbrt_gain,
-        ];
+        let lab_eval = eval_lab(
+            l_plane.data.get(i).copied().unwrap_or(0.0),
+            a_plane.data.get(i).copied().unwrap_or(0.0),
+            b_plane.data.get(i).copied().unwrap_or(0.0),
+            cbrt_gain,
+        );
         if let Some(v) = mask_plane.data.get_mut(i) {
             *v = skin_weight(lab_eval);
         }
@@ -1097,7 +1195,7 @@ pub fn apply(img: &mut Rgb32f, s: &DevelopSettings, px_per_long: f64) {
 
     let mask_sigma = (long * 0.003).clamp(1.0, 8.0);
     let skin_mask = gaussian(&mask_plane, mask_sigma);
-    let fz = FaceZone::detect(img, w, h, &skin_mask, &a_plane, &b_plane, &l_plane);
+    let faces = FaceZone::detect_all(img, w, h, &skin_mask, &a_plane, &b_plane, &l_plane);
 
     // 3-band Frequency Separation on perceptual lightness L:
     // 1. Fine micro-pore texture band: high = L - gaussian(L, fine_sigma)
@@ -1124,18 +1222,18 @@ pub fn apply(img: &mut Rgb32f, s: &DevelopSettings, px_per_long: f64) {
         || hair_luster > 0.0
         || stray_hair > 0.0;
 
-    let fine_sigma = (long * 0.0020).clamp(0.9, 4.2);
-    let mid_sigma = (long * 0.032).clamp(6.5, 64.0);
+    let fine_sigma = (long * 0.0022).clamp(0.9, 4.5);
+    let mid_sigma = (long * 0.034).clamp(6.5, 66.0);
     let low_in = if need_fine { gaussian(&l_plane, fine_sigma) } else { l_plane.clone() };
     let base_l = if need_base {
         let (guided, wide_gauss) = par_join(
-            || guided_fast(&low_in, mid_sigma, 0.048),
+            || guided_fast(&low_in, mid_sigma, 0.024),
             || gaussian(&low_in, mid_sigma),
         );
         let mut out = guided;
         for ((b, &g), &l) in out.data.iter_mut().zip(wide_gauss.data.iter()).zip(low_in.data.iter()) {
             let edge = (l - g).abs();
-            let w_gauss = 0.80 * (1.0 - smoothstep(0.085, 0.18, edge));
+            let w_gauss = 0.80 * (1.0 - smoothstep(0.075, 0.16, edge));
             *b = *b * (1.0 - w_gauss) + g * w_gauss;
         }
         out
@@ -1145,7 +1243,7 @@ pub fn apply(img: &mut Rgb32f, s: &DevelopSettings, px_per_long: f64) {
 
     // Chroma frequency separation on skin-weighted Oklab (a, b): active when smoothing skin, evening tone, or lifting dark circles.
     let (even_a, even_b) = if smooth > 0.0 || tone_even > 0.0 || dark_circles > 0.0 {
-        let chroma_sigma = (long * 0.026).clamp(4.0, 64.0);
+        let chroma_sigma = (long * 0.028).clamp(4.0, 64.0);
         let wa = a_plane.zip_map(&skin_mask, |a, m| a * m);
         let wb = b_plane.zip_map(&skin_mask, |b, m| b * m);
         let ((ba, bb), bm) = par_join(
@@ -1160,11 +1258,11 @@ pub fn apply(img: &mut Rgb32f, s: &DevelopSettings, px_per_long: f64) {
     };
 
     // Texture retention target when skin_smooth > 0:
-    // 0% -> 0.04 (airbrushed porcelain); 50% (default) -> 0.28 (visibly smooth studio skin, soft pores); 100% -> 1.05 (crisp editorial pores).
+    // 0% -> 0.04 (airbrushed porcelain); 50% (default) -> 0.25 (visibly smooth studio skin, soft pores); 100% -> 1.05 (crisp editorial pores).
     let tex_target = if texture <= 0.5 {
-        0.04 + (texture / 0.5) * 0.24
+        0.04 + (texture / 0.5) * 0.21
     } else {
-        0.28 + ((texture - 0.5) / 0.5) * 0.77
+        0.25 + ((texture - 0.5) / 0.5) * 0.80
     };
 
     let l_data = &l_plane.data;
@@ -1176,29 +1274,43 @@ pub fn apply(img: &mut Rgb32f, s: &DevelopSettings, px_per_long: f64) {
     let ea_data = even_a.as_ref().map(|p| p.data.as_slice());
     let eb_data = even_b.as_ref().map(|p| p.data.as_slice());
 
-    let eye_rx = (fz.rx * 0.38).max(4.0);
-    let eye_ry = (fz.ry * 0.28).max(4.0);
-    let mouth_cx = (fz.mouth_right.0 + fz.mouth_left.0) * 0.5;
-    let mouth_rx = ((fz.mouth_left.0 - fz.mouth_right.0).abs() * 0.90).max(fz.rx * 0.50).max(4.0);
-    let mouth_ry = (fz.ry * 0.34).max(4.0);
-
-    let chin_bottom = fz.cy + fz.ry * 0.96;
-    let below_chin = (h as f32 - chin_bottom).max(fz.ry * 0.8);
-    let body_h = (1.55 * fz.ry).min(below_chin * 0.28).max(fz.ry * 0.65).max(8.0);
-    let body_rx = (fz.rx * 2.25).clamp(w as f32 * 0.18, w as f32 * 0.46).max(8.0);
-    let collar_y = chin_bottom + 0.55 * body_h;
-    let chest_y = chin_bottom + 1.25 * body_h;
-    let stomach_y = chin_bottom + 2.25 * body_h;
-
     for_rows(&mut img.data, w, |y, row| {
         let row_off = y * w;
         let py = y as f32 + 0.5;
-        let v_face = (py - fz.cy) / fz.ry;
 
         for (x, px) in row.iter_mut().enumerate() {
             let i = row_off + x;
             let px_x = x as f32 + 0.5;
+            let mut fz = &faces[0];
+            if faces.len() > 1 {
+                let mut best_d2 = f32::MAX;
+                for f in &faces {
+                    let du = (px_x - f.cx) / f.rx;
+                    let dv = (py - f.cy) / f.ry;
+                    let d2 = du * du + dv * dv;
+                    if d2 < best_d2 {
+                        best_d2 = d2;
+                        fz = f;
+                    }
+                }
+            }
+
+            let eye_rx = (fz.rx * 0.38).max(4.0);
+            let eye_ry = (fz.ry * 0.28).max(4.0);
+            let mouth_cx = (fz.mouth_right.0 + fz.mouth_left.0) * 0.5;
+            let mouth_rx = ((fz.mouth_left.0 - fz.mouth_right.0).abs() * 0.90).max(fz.rx * 0.50).max(4.0);
+            let mouth_ry = (fz.ry * 0.34).max(4.0);
+
+            let chin_bottom = fz.cy + fz.ry * 0.96;
+            let below_chin = (h as f32 - chin_bottom).max(fz.ry * 0.8);
+            let body_h = (1.55 * fz.ry).min(below_chin * 0.28).max(fz.ry * 0.65).max(8.0);
+            let body_rx = (fz.rx * 2.25).clamp(w as f32 * 0.18, w as f32 * 0.46).max(8.0);
+            let collar_y = chin_bottom + 0.55 * body_h;
+            let chest_y = chin_bottom + 1.25 * body_h;
+            let stomach_y = chin_bottom + 2.25 * body_h;
+
             let u_face = (px_x - fz.cx) / fz.rx;
+            let v_face = (py - fz.cy) / fz.ry;
             let u_body = (px_x - fz.cx) / body_rx;
 
             let l0 = l_data.get(i).copied().unwrap_or(0.0);
@@ -1206,7 +1318,7 @@ pub fn apply(img: &mut Rgb32f, s: &DevelopSettings, px_per_long: f64) {
             let base = base_data.get(i).copied().unwrap_or(low);
             let a0 = a_data.get(i).copied().unwrap_or(0.0);
             let b0 = b_data.get(i).copied().unwrap_or(0.0);
-            let lab_eval = [l0 * cbrt_gain, a0 * cbrt_gain, b0 * cbrt_gain];
+            let lab_eval = eval_lab(l0, a0, b0, cbrt_gain);
 
             let high = l0 - low;
             let mid = low - base;
@@ -1222,7 +1334,7 @@ pub fn apply(img: &mut Rgb32f, s: &DevelopSettings, px_per_long: f64) {
                 0.0
             };
 
-            // When a neural face is detected, cover both the face ellipse AND the full body corridor below the face.
+            // Cover both the face ellipse AND the full body corridor below the face, while keeping a high floor for limbs/secondary skin.
             let subject_env = if fz.neural {
                 let face_env = bell2(u_face / 1.95, (v_face - 0.25) / 2.15);
                 let body_env = if py >= fz.cy {
@@ -1230,18 +1342,18 @@ pub fn apply(img: &mut Rgb32f, s: &DevelopSettings, px_per_long: f64) {
                 } else {
                     0.0
                 };
-                face_env.max(body_env).max(0.35)
+                face_env.max(body_env).max(0.80)
             } else {
                 1.0
             };
             // Spatial face-skin floor so studio color casts, pale/cool skin, or shadowed faces still receive full retouching:
-            let face_core = bell2(u_face / 1.02, (v_face - 0.04) / 1.12);
-            let l_mid = smoothstep(0.08, 0.20, lab_eval[0]) * (1.0 - smoothstep(0.92, 0.995, lab_eval[0]));
-            let non_feature = (1.0 - 0.80 * feature_protect) * (1.0 - 0.65 * smoothstep(0.030, 0.085, detail));
+            let face_core = bell2(u_face / 1.05, (v_face - 0.04) / 1.15);
+            let l_mid = smoothstep(0.06, 0.18, lab_eval[0]) * (1.0 - smoothstep(0.95, 0.999, lab_eval[0]));
+            let non_feature = (1.0 - 0.80 * feature_protect) * (1.0 - 0.65 * smoothstep(0.035, 0.095, detail));
             let spatial_skin = if fz.neural {
-                0.85 * face_core * l_mid * non_feature
+                0.88 * face_core * l_mid * non_feature
             } else {
-                0.55 * face_core * l_mid * non_feature
+                0.60 * face_core * l_mid * non_feature
             };
             let w_skin = (m_data.get(i).copied().unwrap_or(0.0) * subject_env)
                 .max(spatial_skin)
@@ -1256,17 +1368,19 @@ pub fn apply(img: &mut Rgb32f, s: &DevelopSettings, px_per_long: f64) {
             // --- 1. Skin Retouching & Tone (Face + Full Body Skin) ---
             if w_skin > 1e-4 {
                 if smooth > 0.0 {
-                    let s_eff = smooth.powf(0.72);
-                    let mid_atten = (1.0 - s_eff * 0.96 * w_skin_smooth).clamp(0.02, 1.0);
+                    let s_eff = smooth.powf(0.68);
+                    let mid_atten = (1.0 - s_eff * 0.97 * w_skin_smooth).clamp(0.015, 1.0);
                     // Suppress isolated high-frequency blemish/pore spikes while keeping uniform micro-texture at tex_target:
-                    let spike_damp = 1.0 - s_eff * 0.82 * smoothstep(0.008, 0.032, high.abs()) * w_skin_smooth;
-                    let high_scale = ((1.0 + (tex_target - 1.0) * s_eff * w_skin_smooth) * spike_damp).clamp(0.03, 1.35);
-                    l = base + mid * mid_atten + high * high_scale;
+                    let spike_damp = 1.0 - s_eff * 0.85 * smoothstep(0.006, 0.028, high.abs()) * w_skin_smooth;
+                    let high_scale = ((1.0 + (tex_target - 1.0) * s_eff * w_skin_smooth) * spike_damp).clamp(0.02, 1.35);
+                    // Subtle dodge-and-burn lift on dark blemish/pore dips so skin looks clean and luminous:
+                    let blemish_lift = (-mid).max(0.0) * 0.16 * s_eff * w_skin_smooth;
+                    l = base + mid * mid_atten + high * high_scale + blemish_lift;
                     // Also soften red/brown blemish chroma spikes proportionally to skin_smooth:
                     if let (Some(eas), Some(ebs)) = (ea_data, eb_data) {
                         let ta = eas.get(i).copied().unwrap_or(a);
                         let tb = ebs.get(i).copied().unwrap_or(b);
-                        let kc = (s_eff * 0.75 * w_skin_smooth).clamp(0.0, 0.88);
+                        let kc = (s_eff * 0.80 * w_skin_smooth).clamp(0.0, 0.92);
                         if ta.abs() > 1e-5 || tb.abs() > 1e-5 {
                             a += (ta - a) * kc;
                             b += (tb - b) * kc;
@@ -1533,7 +1647,7 @@ pub fn apply(img: &mut Rgb32f, s: &DevelopSettings, px_per_long: f64) {
 
     // Apply 2D facial reshaping / liquify mesh warp when any reshape slider is active.
     if r.has_reshape() {
-        apply_reshape_warp(img, r, &fz);
+        apply_reshape_warp(img, r, &faces);
     }
 }
 
@@ -1573,10 +1687,12 @@ mod tests {
     fn skin_weight_selects_skin_and_rejects_sky_or_foliage() {
         let skin = [0.68, 0.045, 0.055];
         let deep_skin = [0.42, 0.050, 0.060];
+        let rosy_fair = [0.76, 0.032, -0.002];
         let sky = [0.70, -0.03, -0.10];
         let foliage = [0.55, -0.08, 0.09];
         assert!(skin_weight(skin) > 0.7, "{}", skin_weight(skin));
         assert!(skin_weight(deep_skin) > 0.7, "{}", skin_weight(deep_skin));
+        assert!(skin_weight(rosy_fair) > 0.7, "{}", skin_weight(rosy_fair));
         assert_eq!(skin_weight(sky), 0.0);
         assert_eq!(skin_weight(foliage), 0.0);
     }
@@ -1663,5 +1779,43 @@ mod tests {
         let l_after = oklab_from_2020(img.data[c_idx])[0];
         // The dark blemish + pore dip on the 3D-lit cheek must be strongly smoothed toward the local ramp (~0.60)
         assert!(l_after - l_before > 0.035, "expected strong smoothing on 3D ramp: before={l_before}, after={l_after}");
+    }
+
+    #[test]
+    fn retouch_works_on_dark_background_portrait() {
+        let (w, h) = (128, 128);
+        let dark_bg = oklab_to_2020([0.16, 0.0, 0.0]);
+        let mut orig = Rgb32f::filled(w, h, dark_bg);
+        // Bright studio-lit face (L ~ 0.74) in center over a dark studio background (mean_l ~ 0.25)
+        for y in 36..92 {
+            for x in 40..88 {
+                let dx = x as f32 - 64.0;
+                let dy = y as f32 - 64.0;
+                let blemish = if dx * dx + dy * dy < 20.0 { -0.075 } else { 0.0 };
+                let red_blotch = if dx * dx + dy * dy < 20.0 { 0.032 } else { 0.0 };
+                orig.data[y * w + x] = oklab_to_2020([0.74 + blemish, 0.040 + red_blotch, 0.050]);
+            }
+        }
+        let mut img = orig.clone();
+        let mut s = DevelopSettings::default();
+        s.retouch.skin_smooth = 80.0;
+        s.retouch.skin_tone_even = 75.0;
+        apply(&mut img, &s, 128.0);
+
+        let c_idx = 64 * w + 64;
+        let lab_before = oklab_from_2020(orig.data[c_idx]);
+        let lab_after = oklab_from_2020(img.data[c_idx]);
+        assert!(
+            lab_after[0] - lab_before[0] > 0.045,
+            "dark-background portrait face must be strongly smoothed: before={}, after={}",
+            lab_before[0],
+            lab_after[0]
+        );
+        assert!(
+            lab_before[1] - lab_after[1] > 0.015,
+            "red blemish chroma on dark-background portrait must be calmed: before={}, after={}",
+            lab_before[1],
+            lab_after[1]
+        );
     }
 }
