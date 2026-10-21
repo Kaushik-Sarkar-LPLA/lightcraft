@@ -55,10 +55,10 @@ pub fn skin_weight(lab: [f32; 3]) -> f32 {
     // Rec.2020 primaries produce slightly smaller (a, b) chroma than sRGB, so keep the lower
     // chroma/lightness ramps generous while still rejecting negative-a sky and foliage.
     let c = a.hypot(b);
-    let hue = b.atan2(a); // radians; human skin clusters around 0.25..1.40 rad (~14°..80°)
-    let w_l = smoothstep(0.08, 0.20, l) * (1.0 - smoothstep(0.90, 0.99, l));
-    let w_c = smoothstep(0.006, 0.018, c) * (1.0 - smoothstep(0.20, 0.32, c));
-    let w_h = smoothstep(0.18, 0.40, hue) * (1.0 - smoothstep(1.22, 1.48, hue));
+    let hue = b.atan2(a); // radians; human skin clusters around 0.10..1.48 rad (~6°..85°)
+    let w_l = smoothstep(0.05, 0.16, l) * (1.0 - smoothstep(0.92, 0.995, l));
+    let w_c = smoothstep(0.003, 0.013, c) * (1.0 - smoothstep(0.24, 0.36, c));
+    let w_h = smoothstep(0.04, 0.26, hue) * (1.0 - smoothstep(1.30, 1.56, hue));
     (w_l * w_c * w_h).clamp(0.0, 1.0)
 }
 
@@ -70,9 +70,9 @@ pub fn lip_weight(lab: [f32; 3]) -> f32 {
     if !l.is_finite() || !a.is_finite() || !b.is_finite() {
         return 0.0;
     }
-    let w_l = smoothstep(0.14, 0.26, l) * (1.0 - smoothstep(0.80, 0.90, l));
-    let w_a = smoothstep(0.024, 0.052, a);
-    let w_rose = smoothstep(-0.012, 0.016, a - b * 0.70);
+    let w_l = smoothstep(0.12, 0.24, l) * (1.0 - smoothstep(0.82, 0.92, l));
+    let w_a = smoothstep(0.016, 0.044, a);
+    let w_rose = smoothstep(-0.020, 0.012, a - b * 0.65);
     (w_l * w_a * w_rose).clamp(0.0, 1.0)
 }
 
@@ -85,11 +85,11 @@ pub fn teeth_weight(lab: [f32; 3], detail: f32) -> f32 {
         return 0.0;
     }
     let c = a.hypot(b);
-    let w_l = smoothstep(0.42, 0.58, l) * (1.0 - smoothstep(0.96, 0.998, l));
-    let w_c = 1.0 - smoothstep(0.040, 0.085, c);
-    let w_a = 1.0 - smoothstep(0.022, 0.048, a.abs());
-    let w_b = smoothstep(-0.020, -0.002, b) * (1.0 - smoothstep(0.055, 0.090, b));
-    let w_edge = 0.50 + 0.50 * smoothstep(0.003, 0.028, detail);
+    let w_l = smoothstep(0.32, 0.50, l) * (1.0 - smoothstep(0.97, 0.999, l));
+    let w_c = 1.0 - smoothstep(0.065, 0.145, c);
+    let w_a = 1.0 - smoothstep(0.028, 0.062, a.abs());
+    let w_b = smoothstep(-0.030, -0.004, b) * (1.0 - smoothstep(0.115, 0.180, b));
+    let w_edge = 0.55 + 0.45 * smoothstep(0.002, 0.024, detail);
     (w_l * w_c * w_a * w_b * w_edge).clamp(0.0, 1.0)
 }
 
@@ -101,9 +101,9 @@ pub fn sclera_weight(lab: [f32; 3], w_skin: f32) -> f32 {
         return 0.0;
     }
     let c = a.hypot(b);
-    let w_l = smoothstep(0.38, 0.54, l) * (1.0 - smoothstep(0.96, 0.996, l));
-    let w_c = 1.0 - smoothstep(0.035, 0.075, c);
-    (w_l * w_c * (1.0 - 0.72 * w_skin)).clamp(0.0, 1.0)
+    let w_l = smoothstep(0.24, 0.42, l) * (1.0 - smoothstep(0.97, 0.998, l));
+    let w_c = 1.0 - smoothstep(0.045, 0.095, c);
+    (w_l * w_c * (1.0 - 0.65 * w_skin)).clamp(0.0, 1.0)
 }
 
 /// Quantitative portrait & skin telemetry extracted by YuNet ONNX + Oklab frequency separation
@@ -133,7 +133,7 @@ pub struct PortraitAnalysis {
 /// Fast cached neural face detection on a scene-linear Rec.2020 image using embedded YuNet 2023mar.
 fn detect_neural_faces_cached(img: &Rgb32f) -> Vec<lightcraft_faces::yunet::Face> {
     use std::sync::{Mutex, PoisonError};
-    static CACHE: Mutex<Option<(u64, Vec<lightcraft_faces::yunet::Face>)>> = Mutex::new(None);
+    static CACHE: Mutex<Vec<(u64, Vec<lightcraft_faces::yunet::Face>)>> = Mutex::new(Vec::new());
 
     let (w, h) = (img.width, img.height);
     if w < 48 || h < 48 || img.data.len() < w * h {
@@ -143,7 +143,7 @@ fn detect_neural_faces_cached(img: &Rgb32f) -> Vec<lightcraft_faces::yunet::Face
         return Vec::new();
     };
 
-    // Compute a fast 64-point fingerprint so interactive slider drags hit the cache in O(1).
+    // Compute a fast 64-point fingerprint so interactive slider drags and multi-resolution renders hit the cache in O(1).
     let mut hash: u64 = ((w as u64) << 32) ^ (h as u64) ^ 0x9e37_79b9_7f4a_7c15;
     let step = (img.data.len() / 64).max(1);
     for px in img.data.iter().step_by(step).take(64) {
@@ -153,14 +153,17 @@ fn detect_neural_faces_cached(img: &Rgb32f) -> Vec<lightcraft_faces::yunet::Face
         hash = hash.wrapping_mul(0x517c_c1b7_2722_0a95) ^ r ^ g.rotate_left(21) ^ b.rotate_left(42);
     }
 
-    if let Some((cached_hash, faces)) = CACHE.lock().unwrap_or_else(PoisonError::into_inner).as_ref()
-        && *cached_hash == hash
+    if let Some((_, faces)) = CACHE
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner)
+        .iter()
+        .find(|(h_key, _)| *h_key == hash)
     {
         return faces.clone();
     }
 
-    // Downsample to <= 320 px long edge and auto-normalize exposure to 8-bit sRGB for YuNet inference (~3 ms).
-    let max_edge = 320usize;
+    // Downsample to <= 288 px long edge and auto-normalize exposure to 8-bit sRGB for YuNet inference (~2 ms).
+    let max_edge = 288usize;
     let scale = (max_edge as f32 / w.max(h) as f32).min(1.0);
     let dw = ((w as f32 * scale).round() as usize).max(32);
     let dh = ((h as f32 * scale).round() as usize).max(32);
@@ -202,9 +205,14 @@ fn detect_neural_faces_cached(img: &Rgb32f) -> Vec<lightcraft_faces::yunet::Face
         }
     }
 
-    let opts = lightcraft_faces::yunet::Options { score: 0.42, nms_iou: 0.3, max_faces: 12 };
+    let opts = lightcraft_faces::yunet::Options { score: 0.38, nms_iou: 0.3, max_faces: 12 };
     let faces = detector.detect(&rgb, dw, dh, &opts).unwrap_or_default();
-    *CACHE.lock().unwrap_or_else(PoisonError::into_inner) = Some((hash, faces.clone()));
+    let mut guard = CACHE.lock().unwrap_or_else(PoisonError::into_inner);
+    guard.retain(|(k, _)| *k != hash);
+    if guard.len() >= 16 {
+        guard.remove(0);
+    }
+    guard.push((hash, faces.clone()));
     faces
 }
 
@@ -810,17 +818,18 @@ fn apply_reshape_warp(img: &mut Rgb32f, r: &Retouch, fz: &FaceZone) {
     let smile_rx = (rx * 0.28).max(4.0);
     let smile_ry = (ry * 0.26).max(4.0);
 
-    // Anthropometric body proportions anchored below the detected face (adaptive to half-body, 3/4, or full-body shots).
-    let lower_span = (hf - cy).max(ry * 1.2);
-    let body_h = (2.0 * ry).min(lower_span * 0.24).max(ry * 0.75).max(8.0);
-    let body_rx = (rx * 2.15).clamp(wf * 0.16, wf * 0.44).max(8.0);
-    let neck_y = cy + 0.72 * body_h;
-    let shoulder_y = cy + 1.18 * body_h;
-    let chest_y = cy + 1.68 * body_h;
-    let arm_y = cy + 2.05 * body_h;
-    let waist_y = cy + 2.50 * body_h;
-    let hip_y = cy + 3.25 * body_h;
-    let leg_y0 = cy + 3.10 * body_h;
+    // Anthropometric body proportions strictly anchored below the chin (adaptive to half-body, 3/4, or full-body shots).
+    let chin_bottom = cy + ry * 0.96;
+    let below_chin = (hf - chin_bottom).max(ry * 0.8);
+    let body_h = (1.55 * ry).min(below_chin * 0.28).max(ry * 0.65).max(8.0);
+    let body_rx = (rx * 2.25).clamp(wf * 0.18, wf * 0.46).max(8.0);
+    let neck_y = chin_bottom + 0.22 * body_h;
+    let shoulder_y = chin_bottom + 0.62 * body_h;
+    let chest_y = chin_bottom + 1.25 * body_h;
+    let arm_y = chin_bottom + 1.65 * body_h;
+    let waist_y = chin_bottom + 2.15 * body_h;
+    let hip_y = chin_bottom + 2.95 * body_h;
+    let leg_y0 = chin_bottom + 2.80 * body_h;
 
     for_rows(&mut img.data, w, |y, row| {
         let py = y as f32 + 0.5;
@@ -828,7 +837,7 @@ fn apply_reshape_warp(img: &mut Rgb32f, r: &Retouch, fz: &FaceZone) {
         if !has_body_warp && v.abs() > 1.50 {
             return;
         }
-        if !has_face_warp && py < cy - ry * 0.25 {
+        if !has_face_warp && py < chin_bottom - ry * 0.35 {
             return;
         }
 
@@ -843,9 +852,9 @@ fn apply_reshape_warp(img: &mut Rgb32f, r: &Retouch, fz: &FaceZone) {
                 // 1. Face & Jawline Slimming: pull lower-mid cheeks and jawline toward facial midline.
                 if face_slim.abs() > 1e-4 {
                     let side = u.abs();
-                    let w_jaw = bell2((side - 0.66) / 0.58, (v - 0.30) / 0.68);
-                    dx += u.signum() * face_slim * (rx * 0.13) * w_jaw;
-                    dy += face_slim * (ry * 0.028) * w_jaw;
+                    let w_jaw = bell2((side - 0.64) / 0.62, (v - 0.28) / 0.72);
+                    dx += u.signum() * face_slim * (rx * 0.26) * w_jaw;
+                    dy += face_slim * (ry * 0.055) * w_jaw;
                 }
 
                 // 2. Eye Size Enlargement: radial zoom around exact neural right and left eye landmarks.
@@ -855,8 +864,8 @@ fn apply_reshape_warp(img: &mut Rgb32f, r: &Retouch, fz: &FaceZone) {
                         let ev = (py - ey) / eye_ry;
                         let w_eye = bell2(eu, ev);
                         if w_eye > 0.0 {
-                            dx -= (px_x - ex) * (eye_enlarge * 0.36 * w_eye);
-                            dy -= (py - ey) * (eye_enlarge * 0.36 * w_eye);
+                            dx -= (px_x - ex) * (eye_enlarge * 0.65 * w_eye);
+                            dy -= (py - ey) * (eye_enlarge * 0.65 * w_eye);
                         }
                     }
                 }
@@ -866,7 +875,7 @@ fn apply_reshape_warp(img: &mut Rgb32f, r: &Retouch, fz: &FaceZone) {
                     let nu = (px_x - nose_x) / nose_rx;
                     let nv = (py - nose_y) / nose_ry;
                     let w_nose = bell2(nu, nv) * nu.abs().min(1.0);
-                    dx += nu.signum() * nose_slim * (nose_rx * 0.28) * w_nose;
+                    dx += nu.signum() * nose_slim * (nose_rx * 0.58) * w_nose;
                 }
 
                 // 4. Chin Length: vertical elongation (+) or shortening (-) of the lower chin.
@@ -874,7 +883,7 @@ fn apply_reshape_warp(img: &mut Rgb32f, r: &Retouch, fz: &FaceZone) {
                     let cu = (px_x - cx) / chin_rx;
                     let cv = (py - chin_y) / chin_ry;
                     let w_chin = bell2(cu, cv);
-                    dy -= chin_length * (ry * 0.14) * w_chin;
+                    dy -= chin_length * (ry * 0.24) * w_chin;
                 }
 
                 // 5. Smile Lift: upward (+) or downward (-) shift at neural right and left mouth corners.
@@ -884,100 +893,100 @@ fn apply_reshape_warp(img: &mut Rgb32f, r: &Retouch, fz: &FaceZone) {
                         let mv = (py - my) / smile_ry;
                         let w_smile = bell2(mu, mv);
                         if w_smile > 0.0 {
-                            dy += smile_lift * (ry * 0.095) * w_smile;
-                            dx -= sign * smile_lift * (rx * 0.028) * w_smile;
+                            dy += smile_lift * (ry * 0.18) * w_smile;
+                            dx -= sign * smile_lift * (rx * 0.050) * w_smile;
                         }
                     }
                 }
             }
 
             // --- B. Full-Body Reshaping (Torso, Waist, Stomach, Hips, Shoulders, Arms, Neck, Chest, Legs) ---
-            if has_body_warp && py >= cy - ry * 0.15 {
+            if has_body_warp && py >= chin_bottom - ry * 0.25 {
                 let u_body = (px_x - cx) / body_rx;
                 let side_body = u_body.abs();
 
-                if side_body <= 1.65 {
+                if side_body <= 1.70 {
                     // 1. Overall Body Slimming: smooth lateral compression across torso, waist, and hips.
                     if body_slim.abs() > 1e-4 {
-                        let v_torso = (py - (cy + 2.35 * body_h)) / (body_h * 1.65);
-                        let w_body = bell2((side_body - 0.68) / 0.62, v_torso) * side_body.min(1.0);
-                        dx += u_body.signum() * body_slim * (body_rx * 0.15) * w_body;
+                        let v_torso = (py - (chin_bottom + 1.95 * body_h)) / (body_h * 1.85);
+                        let w_body = bell2((side_body - 0.65) / 0.65, v_torso) * side_body.min(1.0);
+                        dx += u_body.signum() * body_slim * (body_rx * 0.28) * w_body;
                     }
 
                     // 2. Waist & Stomach Slimming: concentrated inward cinch at the midriff/waistline.
                     if waist_slim.abs() > 1e-4 {
-                        let v_waist = (py - waist_y) / (body_h * 0.88);
-                        let w_waist = bell2((side_body - 0.62) / 0.55, v_waist) * side_body.min(1.0);
-                        dx += u_body.signum() * waist_slim * (body_rx * 0.17) * w_waist;
-                        dy += waist_slim * (body_h * 0.032) * w_waist;
+                        let v_waist = (py - waist_y) / (body_h * 0.92);
+                        let w_waist = bell2((side_body - 0.60) / 0.58, v_waist) * side_body.min(1.0);
+                        dx += u_body.signum() * waist_slim * (body_rx * 0.30) * w_waist;
+                        dy += waist_slim * (body_h * 0.055) * w_waist;
                     }
 
                     // 3. Stomach Flatten (Tummy Tuck): pulls central & lateral abdomen inward and lifts lower belly upward.
                     if stomach_flat > 1e-4 {
-                        let v_stom = (py - (waist_y + 0.18 * body_h)) / (body_h * 0.82);
-                        let w_stom_center = bell2(u_body / 0.78, v_stom);
-                        let w_stom_side = bell2((side_body - 0.52) / 0.48, v_stom) * side_body.min(1.0);
-                        dx += u_body.signum() * stomach_flat * (body_rx * 0.13) * w_stom_side;
-                        dy += stomach_flat * (body_h * 0.095) * w_stom_center;
+                        let v_stom = (py - (waist_y + 0.18 * body_h)) / (body_h * 0.88);
+                        let w_stom_center = bell2(u_body / 0.82, v_stom);
+                        let w_stom_side = bell2((side_body - 0.50) / 0.52, v_stom) * side_body.min(1.0);
+                        dx += u_body.signum() * stomach_flat * (body_rx * 0.25) * w_stom_side;
+                        dy += stomach_flat * (body_h * 0.18) * w_stom_center;
                     }
 
                     // 4. Hips & S-Curve: + expands hourglass hips outward while cinching upper waist; - slims hips inward.
                     if hip_enhance.abs() > 1e-4 {
-                        let v_hip = (py - hip_y) / (body_h * 0.85);
-                        let w_hip = bell2((side_body - 0.72) / 0.52, v_hip) * side_body.min(1.0);
-                        dx -= u_body.signum() * hip_enhance * (body_rx * 0.15) * w_hip;
+                        let v_hip = (py - hip_y) / (body_h * 0.90);
+                        let w_hip = bell2((side_body - 0.70) / 0.55, v_hip) * side_body.min(1.0);
+                        dx -= u_body.signum() * hip_enhance * (body_rx * 0.28) * w_hip;
                         if hip_enhance > 0.0 {
-                            let v_upper_s = (py - (waist_y - 0.10 * body_h)) / (body_h * 0.65);
-                            let w_s = bell2((side_body - 0.60) / 0.45, v_upper_s) * side_body.min(1.0);
-                            dx += u_body.signum() * hip_enhance * (body_rx * 0.055) * w_s;
+                            let v_upper_s = (py - (waist_y - 0.10 * body_h)) / (body_h * 0.68);
+                            let w_s = bell2((side_body - 0.58) / 0.48, v_upper_s) * side_body.min(1.0);
+                            dx += u_body.signum() * hip_enhance * (body_rx * 0.11) * w_s;
                         }
                     }
 
                     // 5. Shoulder Width & Posture: + broadens & squares shoulders; - narrows broad shoulders.
                     if shoulder_width.abs() > 1e-4 {
-                        let v_sh = (py - shoulder_y) / (body_h * 0.65);
-                        let w_sh = bell2((side_body - 0.82) / 0.52, v_sh) * side_body.min(1.0);
-                        dx -= u_body.signum() * shoulder_width * (body_rx * 0.13) * w_sh;
-                        dy += shoulder_width * (body_h * 0.042) * w_sh;
+                        let v_sh = (py - shoulder_y) / (body_h * 0.68);
+                        let w_sh = bell2((side_body - 0.80) / 0.55, v_sh) * side_body.min(1.0);
+                        dx -= u_body.signum() * shoulder_width * (body_rx * 0.25) * w_sh;
+                        dy += shoulder_width * (body_h * 0.075) * w_sh;
                     }
 
                     // 6. Arm Slimming: pinches outer left & right arm corridors toward the arm axes.
                     if arm_slim.abs() > 1e-4 {
                         for arm_sign in [-1.0f32, 1.0f32] {
                             let arm_cx = cx + arm_sign * (body_rx * 0.88);
-                            let au = (px_x - arm_cx) / (body_rx * 0.34).max(4.0);
-                            let av = (py - arm_y) / (body_h * 1.05);
+                            let au = (px_x - arm_cx) / (body_rx * 0.36).max(4.0);
+                            let av = (py - arm_y) / (body_h * 1.10);
                             let w_arm = bell2(au, av) * au.abs().min(1.0);
                             if w_arm > 0.0 {
-                                dx += au.signum() * arm_slim * (body_rx * 0.10) * w_arm;
+                                dx += au.signum() * arm_slim * (body_rx * 0.26) * w_arm;
                             }
                         }
                     }
 
                     // 7. Neck Slimming & Lengthening: pinches neck sides inward and subtly elongates neck.
                     if neck_slim.abs() > 1e-4 {
-                        let nu = (px_x - cx) / (rx * 0.92).max(4.0);
-                        let nv = (py - neck_y) / (body_h * 0.48).max(4.0);
+                        let nu = (px_x - cx) / (rx * 0.94).max(4.0);
+                        let nv = (py - neck_y) / (body_h * 0.52).max(4.0);
                         let w_neck = bell2(nu, nv);
                         if w_neck > 0.0 {
-                            dx += nu.signum() * neck_slim * (rx * 0.12) * w_neck * nu.abs().min(1.0);
-                            dy += neck_slim * (body_h * 0.045) * w_neck;
+                            dx += nu.signum() * neck_slim * (rx * 0.28) * w_neck * nu.abs().min(1.0);
+                            dy += neck_slim * (body_h * 0.085) * w_neck;
                         }
                     }
 
                     // 8. Chest / Bust Sculpt: radial volume zoom + subtle upward lift around left/right chest anchors.
                     if chest_enhance.abs() > 1e-4 {
-                        let chest_rx = (body_rx * 0.42).max(4.0);
-                        let chest_ry = (body_h * 0.55).max(4.0);
+                        let chest_rx = (body_rx * 0.44).max(4.0);
+                        let chest_ry = (body_h * 0.58).max(4.0);
                         for c_sign in [-1.0f32, 1.0f32] {
                             let ccx = cx + c_sign * (body_rx * 0.34);
                             let cu = (px_x - ccx) / chest_rx;
                             let cv = (py - chest_y) / chest_ry;
                             let w_chest = bell2(cu, cv);
                             if w_chest > 0.0 {
-                                dx -= (px_x - ccx) * (chest_enhance * 0.26 * w_chest);
-                                dy -= (py - chest_y) * (chest_enhance * 0.22 * w_chest);
-                                dy += chest_enhance.max(0.0) * (body_h * 0.042) * w_chest;
+                                dx -= (px_x - ccx) * (chest_enhance * 0.48 * w_chest);
+                                dy -= (py - chest_y) * (chest_enhance * 0.40 * w_chest);
+                                dy += chest_enhance.max(0.0) * (body_h * 0.075) * w_chest;
                             }
                         }
                     }
@@ -987,10 +996,10 @@ fn apply_reshape_warp(img: &mut Rgb32f, r: &Retouch, fz: &FaceZone) {
                         let leg_span = (hf - leg_y0).max(body_h * 0.8);
                         let t_leg = ((py - leg_y0) / leg_span).clamp(0.0, 1.0);
                         let w_leg_v = smoothstep(0.0, 0.35, t_leg) * (1.0 - 0.35 * smoothstep(0.75, 1.0, t_leg));
-                        let w_leg_h = bell2(u_body / 1.15, 0.0);
-                        dy -= leg_length * (leg_span * 0.14) * w_leg_v * w_leg_h;
-                        let w_thigh = bell2((side_body - 0.52) / 0.48, 0.0) * w_leg_v * side_body.min(1.0);
-                        dx += u_body.signum() * leg_length * (body_rx * 0.085) * w_thigh;
+                        let w_leg_h = bell2(u_body / 1.18, 0.0);
+                        dy -= leg_length * (leg_span * 0.25) * w_leg_v * w_leg_h;
+                        let w_thigh = bell2((side_body - 0.52) / 0.50, 0.0) * w_leg_v * side_body.min(1.0);
+                        dx += u_body.signum() * leg_length * (body_rx * 0.18) * w_thigh;
                     }
                 }
             }
@@ -1090,8 +1099,8 @@ pub fn apply(img: &mut Rgb32f, s: &DevelopSettings, px_per_long: f64) {
     let fz = FaceZone::detect(img, w, h, &skin_mask, &a_plane, &b_plane, &l_plane);
 
     // 3-band Frequency Separation on perceptual lightness L:
-    // 1. Ultra-fine micro-pore texture band: high = L - gaussian(L, fine_sigma)
-    // 2. Edge-aware smooth contour base: base = guided_fast(low_in, mid_sigma, eps)
+    // 1. Fine micro-pore texture band: high = L - gaussian(L, fine_sigma)
+    // 2. Edge-aware smooth contour base: base = guided_fast(low_in, mid_sigma, eps) + wide Gaussian blend
     // 3. Medium blemish/pimple/blotch/wrinkle/eye-bag band: mid = low_in - base
     let need_fine = smooth > 0.0
         || wrinkle > 0.0
@@ -1114,18 +1123,28 @@ pub fn apply(img: &mut Rgb32f, s: &DevelopSettings, px_per_long: f64) {
         || hair_luster > 0.0
         || stray_hair > 0.0;
 
-    let fine_sigma = (long * 0.0008).clamp(0.6, 2.2);
-    let mid_sigma = (long * 0.020).clamp(3.0, 48.0);
+    let fine_sigma = (long * 0.0020).clamp(0.9, 4.2);
+    let mid_sigma = (long * 0.032).clamp(6.5, 64.0);
     let low_in = if need_fine { gaussian(&l_plane, fine_sigma) } else { l_plane.clone() };
     let base_l = if need_base {
-        guided_fast(&low_in, mid_sigma, 0.022)
+        let (guided, wide_gauss) = par_join(
+            || guided_fast(&low_in, mid_sigma, 0.048),
+            || gaussian(&low_in, mid_sigma),
+        );
+        let mut out = guided;
+        for ((b, &g), &l) in out.data.iter_mut().zip(wide_gauss.data.iter()).zip(low_in.data.iter()) {
+            let edge = (l - g).abs();
+            let w_gauss = 0.80 * (1.0 - smoothstep(0.085, 0.18, edge));
+            *b = *b * (1.0 - w_gauss) + g * w_gauss;
+        }
+        out
     } else {
         low_in.clone()
     };
 
     // Chroma frequency separation on skin-weighted Oklab (a, b): active when smoothing skin, evening tone, or lifting dark circles.
     let (even_a, even_b) = if smooth > 0.0 || tone_even > 0.0 || dark_circles > 0.0 {
-        let chroma_sigma = (long * 0.022).clamp(3.5, 56.0);
+        let chroma_sigma = (long * 0.026).clamp(4.0, 64.0);
         let wa = a_plane.zip_map(&skin_mask, |a, m| a * m);
         let wb = b_plane.zip_map(&skin_mask, |b, m| b * m);
         let ((ba, bb), bm) = par_join(
@@ -1140,11 +1159,11 @@ pub fn apply(img: &mut Rgb32f, s: &DevelopSettings, px_per_long: f64) {
     };
 
     // Texture retention target when skin_smooth > 0:
-    // 0% -> 0.10 (airbrushed porcelain); 50% (default) -> 0.45 (visibly smooth, soft pores); 100% -> 1.15 (crisp editorial pores).
+    // 0% -> 0.04 (airbrushed porcelain); 50% (default) -> 0.28 (visibly smooth studio skin, soft pores); 100% -> 1.05 (crisp editorial pores).
     let tex_target = if texture <= 0.5 {
-        0.10 + (texture / 0.5) * 0.35
+        0.04 + (texture / 0.5) * 0.24
     } else {
-        0.45 + ((texture - 0.5) / 0.5) * 0.70
+        0.28 + ((texture - 0.5) / 0.5) * 0.77
     };
 
     let l_data = &l_plane.data;
@@ -1162,12 +1181,13 @@ pub fn apply(img: &mut Rgb32f, s: &DevelopSettings, px_per_long: f64) {
     let mouth_rx = ((fz.mouth_left.0 - fz.mouth_right.0).abs() * 0.90).max(fz.rx * 0.50).max(4.0);
     let mouth_ry = (fz.ry * 0.34).max(4.0);
 
-    let lower_span = (h as f32 - fz.cy).max(fz.ry * 1.2);
-    let body_h = (2.0 * fz.ry).min(lower_span * 0.24).max(fz.ry * 0.75).max(8.0);
-    let body_rx = (fz.rx * 2.15).clamp(w as f32 * 0.16, w as f32 * 0.44).max(8.0);
-    let collar_y = fz.cy + 0.92 * body_h;
-    let chest_y = fz.cy + 1.68 * body_h;
-    let stomach_y = fz.cy + 2.65 * body_h;
+    let chin_bottom = fz.cy + fz.ry * 0.96;
+    let below_chin = (h as f32 - chin_bottom).max(fz.ry * 0.8);
+    let body_h = (1.55 * fz.ry).min(below_chin * 0.28).max(fz.ry * 0.65).max(8.0);
+    let body_rx = (fz.rx * 2.25).clamp(w as f32 * 0.18, w as f32 * 0.46).max(8.0);
+    let collar_y = chin_bottom + 0.55 * body_h;
+    let chest_y = chin_bottom + 1.25 * body_h;
+    let stomach_y = chin_bottom + 2.25 * body_h;
 
     for_rows(&mut img.data, w, |y, row| {
         let row_off = y * w;
@@ -1191,30 +1211,41 @@ pub fn apply(img: &mut Rgb32f, s: &DevelopSettings, px_per_long: f64) {
             let mid = low - base;
             let detail = high.abs() + 0.5 * mid.abs();
 
+            // Anatomical feature protection around eyes, brows, and lips so strong skin smoothing keeps eyes/lashes/lips razor-sharp:
+            let feature_protect = if fz.neural {
+                let p_er = bell2((px_x - fz.right_eye.0) / (eye_rx * 0.88), (py - fz.right_eye.1) / (eye_ry * 0.82));
+                let p_el = bell2((px_x - fz.left_eye.0) / (eye_rx * 0.88), (py - fz.left_eye.1) / (eye_ry * 0.82));
+                let p_mouth = bell2((px_x - mouth_cx) / (mouth_rx * 0.78), (py - fz.mouth_y) / (mouth_ry * 0.72));
+                p_er.max(p_el).max(p_mouth * 0.85)
+            } else {
+                0.0
+            };
+
             // When a neural face is detected, cover both the face ellipse AND the full body corridor below the face.
             let subject_env = if fz.neural {
-                let face_env = bell2(u_face / 1.85, (v_face - 0.25) / 2.05);
+                let face_env = bell2(u_face / 1.95, (v_face - 0.25) / 2.15);
                 let body_env = if py >= fz.cy {
-                    bell2(u_body / 1.45, (py - (fz.cy + 2.2 * body_h)) / (body_h * 3.0))
+                    bell2(u_body / 1.55, (py - (chin_bottom + 1.8 * body_h)) / (body_h * 3.2))
                 } else {
                     0.0
                 };
-                face_env.max(body_env).max(0.30)
+                face_env.max(body_env).max(0.35)
             } else {
                 1.0
             };
             // Spatial face-skin floor so studio color casts, pale/cool skin, or shadowed faces still receive full retouching:
-            let face_core = bell2(u_face / 0.96, (v_face - 0.04) / 1.06);
-            let l_mid = smoothstep(0.10, 0.22, lab_eval[0]) * (1.0 - smoothstep(0.92, 0.99, lab_eval[0]));
-            let non_feature = 1.0 - 0.70 * smoothstep(0.025, 0.075, detail);
+            let face_core = bell2(u_face / 1.02, (v_face - 0.04) / 1.12);
+            let l_mid = smoothstep(0.08, 0.20, lab_eval[0]) * (1.0 - smoothstep(0.92, 0.995, lab_eval[0]));
+            let non_feature = (1.0 - 0.80 * feature_protect) * (1.0 - 0.65 * smoothstep(0.030, 0.085, detail));
             let spatial_skin = if fz.neural {
-                0.78 * face_core * l_mid * non_feature
+                0.85 * face_core * l_mid * non_feature
             } else {
-                0.45 * face_core * l_mid * non_feature
+                0.55 * face_core * l_mid * non_feature
             };
             let w_skin = (m_data.get(i).copied().unwrap_or(0.0) * subject_env)
                 .max(spatial_skin)
                 .clamp(0.0, 1.0);
+            let w_skin_smooth = (w_skin * (1.0 - 0.75 * feature_protect)).clamp(0.0, 1.0);
 
             let mut l = l0;
             let mut a = a0;
@@ -1224,14 +1255,17 @@ pub fn apply(img: &mut Rgb32f, s: &DevelopSettings, px_per_long: f64) {
             // --- 1. Skin Retouching & Tone (Face + Full Body Skin) ---
             if w_skin > 1e-4 {
                 if smooth > 0.0 {
-                    let mid_atten = (1.0 - smooth * 0.92 * w_skin).clamp(0.04, 1.0);
-                    let high_scale = (1.0 + (tex_target - 1.0) * smooth.powf(0.75) * w_skin).clamp(0.08, 1.35);
+                    let s_eff = smooth.powf(0.72);
+                    let mid_atten = (1.0 - s_eff * 0.96 * w_skin_smooth).clamp(0.02, 1.0);
+                    // Suppress isolated high-frequency blemish/pore spikes while keeping uniform micro-texture at tex_target:
+                    let spike_damp = 1.0 - s_eff * 0.82 * smoothstep(0.008, 0.032, high.abs()) * w_skin_smooth;
+                    let high_scale = ((1.0 + (tex_target - 1.0) * s_eff * w_skin_smooth) * spike_damp).clamp(0.03, 1.35);
                     l = base + mid * mid_atten + high * high_scale;
                     // Also soften red/brown blemish chroma spikes proportionally to skin_smooth:
                     if let (Some(eas), Some(ebs)) = (ea_data, eb_data) {
                         let ta = eas.get(i).copied().unwrap_or(a);
                         let tb = ebs.get(i).copied().unwrap_or(b);
-                        let kc = (smooth * 0.45 * w_skin).clamp(0.0, 0.65);
+                        let kc = (s_eff * 0.75 * w_skin_smooth).clamp(0.0, 0.88);
                         if ta.abs() > 1e-5 || tb.abs() > 1e-5 {
                             a += (ta - a) * kc;
                             b += (tb - b) * kc;
@@ -1242,36 +1276,36 @@ pub fn apply(img: &mut Rgb32f, s: &DevelopSettings, px_per_long: f64) {
 
                 // Wrinkle & body crease/cellulite reduction: attenuate dark linear creases in both `mid` and `high`
                 if wrinkle > 0.0 && (mid < 0.0 || high < 0.0) {
-                    let crease_w = smoothstep(0.001, 0.030, -(mid.min(0.0) + 0.5 * high.min(0.0))) * w_skin;
+                    let crease_w = smoothstep(0.0008, 0.025, -(mid.min(0.0) + 0.6 * high.min(0.0))) * w_skin_smooth;
                     let cur_mid = l - base - high;
                     if cur_mid < 0.0 {
-                        l -= cur_mid * (wrinkle * 0.92 * crease_w).clamp(0.0, 0.95);
+                        l -= cur_mid * (wrinkle * 0.96 * crease_w).clamp(0.0, 0.98);
                         changed = true;
                     }
                     if high < 0.0 {
-                        l -= high * (wrinkle * 0.65 * crease_w).clamp(0.0, 0.85);
+                        l -= high * (wrinkle * 0.78 * crease_w).clamp(0.0, 0.92);
                         changed = true;
                     }
                 }
 
                 // Under-eye dark circles & eye bags: infraorbital zone right below neural eye landmarks + trough & shadow lift
                 if dark_circles > 0.0 {
-                    let dc_r = bell2((px_x - fz.right_eye.0) / eye_rx, (py - (fz.right_eye.1 + eye_ry * 0.72)) / eye_ry);
-                    let dc_l = bell2((px_x - fz.left_eye.0) / eye_rx, (py - (fz.left_eye.1 + eye_ry * 0.72)) / eye_ry);
+                    let dc_r = bell2((px_x - fz.right_eye.0) / (eye_rx * 1.25), (py - (fz.right_eye.1 + eye_ry * 0.68)) / (eye_ry * 1.15));
+                    let dc_l = bell2((px_x - fz.left_eye.0) / (eye_rx * 1.25), (py - (fz.left_eye.1 + eye_ry * 0.68)) / (eye_ry * 1.15));
                     let under_eye_zone = dc_r
                         .max(dc_l)
-                        .max(0.50 * bell2(u_face / 0.88, (v_face - 0.02) / 0.48));
+                        .max(0.55 * bell2(u_face / 0.90, (v_face - 0.02) / 0.50));
                     let trough = (base - low).max(0.0);
-                    let w_dc = w_skin * (0.35 + 0.65 * under_eye_zone);
+                    let w_dc = w_skin * (0.40 + 0.60 * under_eye_zone);
                     if w_dc > 1e-3 {
-                        let broad_shadow = ((0.70 - l * cbrt_gain).clamp(0.0, 0.32) / cbrt_gain.max(0.5)) * under_eye_zone * 0.32;
-                        l += (trough * 0.95 + broad_shadow) * (dark_circles * w_dc).clamp(0.0, 0.95);
+                        let broad_shadow = ((0.72 - l * cbrt_gain).clamp(0.0, 0.35) / cbrt_gain.max(0.5)) * under_eye_zone * 0.45;
+                        l += (trough * 1.10 + broad_shadow) * (dark_circles * w_dc).clamp(0.0, 0.98);
                         changed = true;
                     }
                     if let (Some(eas), Some(ebs)) = (ea_data, eb_data) {
                         let ta = eas.get(i).copied().unwrap_or(a);
                         let tb = ebs.get(i).copied().unwrap_or(b);
-                        let k = (dark_circles * 0.78 * w_dc).clamp(0.0, 1.0);
+                        let k = (dark_circles * 0.85 * w_dc).clamp(0.0, 1.0);
                         if ta.abs() > 1e-5 || tb.abs() > 1e-5 {
                             a += (ta - a) * k;
                             b += (tb.max(b) - b) * k;
@@ -1286,25 +1320,25 @@ pub fn apply(img: &mut Rgb32f, s: &DevelopSettings, px_per_long: f64) {
                 {
                     let ta = eas.get(i).copied().unwrap_or(a);
                     let tb = ebs.get(i).copied().unwrap_or(b);
-                    let k = (tone_even * 0.88 * w_skin).clamp(0.0, 0.96);
+                    let k = (tone_even * 0.92 * w_skin).clamp(0.0, 0.98);
                     if ta.abs() > 1e-5 || tb.abs() > 1e-5 {
                         a += (ta - a) * k;
                         b += (tb - b) * k;
                     }
-                    // Also gently even out medium luminance blotches when tone_even is raised:
+                    // Also even out medium luminance blotches when tone_even is raised:
                     let cur_mid = l - base - high;
-                    l -= cur_mid * (tone_even * 0.42 * w_skin).clamp(0.0, 0.65);
+                    l -= cur_mid * (tone_even * 0.58 * w_skin_smooth).clamp(0.0, 0.80);
                     changed = true;
                 }
 
                 // Specular shine control
                 if shine > 0.0 && l > base {
-                    let hi_w = smoothstep(0.42, 0.72, lab_eval[0]) * w_skin;
+                    let hi_w = smoothstep(0.34, 0.66, lab_eval[0]) * w_skin;
                     let excess = (l - base).max(0.0);
-                    let compressed = excess / (1.0 + shine * 4.5 * hi_w * (excess / 0.06).max(0.35));
+                    let compressed = excess / (1.0 + shine * 6.5 * hi_w * (excess / 0.045).max(0.45));
                     let dl = (excess - compressed) * hi_w * shine;
                     l = (l - dl).max(base);
-                    let chroma_boost = 1.0 + dl * 0.85;
+                    let chroma_boost = 1.0 + dl * 1.05;
                     a *= chroma_boost;
                     b *= chroma_boost;
                     changed = true;
@@ -1312,26 +1346,26 @@ pub fn apply(img: &mut Rgb32f, s: &DevelopSettings, px_per_long: f64) {
 
                 // Skin Radiance (subsurface midtone glow with highlight rolloff)
                 if radiance.abs() > 1e-4 {
-                    let mid_tone = (4.0 * l.clamp(0.0, 1.0) * (1.0 - l.clamp(0.0, 1.0))).clamp(0.15, 1.0);
-                    l += radiance * 0.13 * mid_tone * w_skin;
+                    let mid_tone = (4.0 * l.clamp(0.0, 1.0) * (1.0 - l.clamp(0.0, 1.0))).clamp(0.18, 1.0);
+                    l += radiance * 0.16 * mid_tone * w_skin;
                     changed = true;
                 }
 
                 // Skin Warmth (golden/tan shift along Oklab b and subtle a)
                 if warmth.abs() > 1e-4 {
-                    b += warmth * 0.042 * w_skin;
-                    a += warmth * 0.010 * w_skin;
+                    b += warmth * 0.052 * w_skin;
+                    a += warmth * 0.012 * w_skin;
                     changed = true;
                 }
 
                 // Skin Redness (calms rosacea/flushing when negative, adds rosy tint when positive)
                 if redness.abs() > 1e-4 {
                     let red_boost = if redness < 0.0 {
-                        1.0 + smoothstep(0.03, 0.09, lab_eval[1]) * 0.65
+                        1.0 + smoothstep(0.02, 0.08, lab_eval[1]) * 0.85
                     } else {
                         1.0
                     };
-                    a += redness * 0.038 * red_boost * w_skin;
+                    a += redness * 0.048 * red_boost * w_skin;
                     changed = true;
                 }
 
@@ -1342,25 +1376,25 @@ pub fn apply(img: &mut Rgb32f, s: &DevelopSettings, px_per_long: f64) {
                         .max(0.80 * bell2((u_face.abs() - 0.38) / 0.26, (v_face - 0.08) / 0.20))
                         .max(0.70 * bell2(u_face / 0.26, (v_face - 0.68) / 0.20));
                     let jaw_hollow = bell2((u_face.abs() - 0.70) / 0.35, (v_face - 0.34) / 0.45);
-                    let sculpt = (t_zone_hi * 0.085 - jaw_hollow * 0.080) * face_contour * w_skin;
+                    let sculpt = (t_zone_hi * 0.115 - jaw_hollow * 0.105) * face_contour * w_skin;
                     l += sculpt;
                     changed = true;
                 }
 
                 // 3D Collarbone & Neck Sculpt (subtle clavicle highlight + lateral neck shadow when neck_slim > 0)
-                if neck_slim > 0.0 && py >= fz.cy {
-                    let w_clav = bell2((u_body.abs() - 0.38) / 0.28, (py - collar_y) / (body_h * 0.24));
+                if neck_slim > 0.0 && py >= chin_bottom {
+                    let w_clav = bell2((u_body.abs() - 0.38) / 0.28, (py - collar_y) / (body_h * 0.28));
                     if w_clav > 1e-3 {
-                        l += 0.055 * neck_slim * w_clav * w_skin;
+                        l += 0.075 * neck_slim * w_clav * w_skin;
                         changed = true;
                     }
                 }
 
                 // 3D Chest Contour (subtle upper-chest highlight/shadow sculpt when chest_enhance > 0)
                 if chest_enhance > 0.0 && py >= collar_y {
-                    let w_c_hi = bell2((u_body.abs() - 0.30) / 0.28, (py - chest_y) / (body_h * 0.44));
-                    let w_c_sh = bell2(u_body / 0.16, (py - chest_y) / (body_h * 0.40));
-                    let c_sculpt = (w_c_hi * 0.062 - w_c_sh * 0.045) * chest_enhance * w_skin;
+                    let w_c_hi = bell2((u_body.abs() - 0.30) / 0.28, (py - chest_y) / (body_h * 0.46));
+                    let w_c_sh = bell2(u_body / 0.16, (py - chest_y) / (body_h * 0.42));
+                    let c_sculpt = (w_c_hi * 0.085 - w_c_sh * 0.060) * chest_enhance * w_skin;
                     if c_sculpt.abs() > 1e-4 {
                         l += c_sculpt;
                         changed = true;
@@ -1369,15 +1403,15 @@ pub fn apply(img: &mut Rgb32f, s: &DevelopSettings, px_per_long: f64) {
             }
 
             // --- 1b. 3D Stomach Flatten (works on both bare skin and clothed abdomen) ---
-            if stomach_flat > 0.0 && py >= fz.cy + body_h {
-                let w_ab = bell2(u_body / 0.78, (py - stomach_y) / (body_h * 0.88));
+            if stomach_flat > 0.0 && py >= chin_bottom + body_h * 0.8 {
+                let w_ab = bell2(u_body / 0.82, (py - stomach_y) / (body_h * 0.92));
                 if w_ab > 1e-3 {
                     // Compress convex mid-frequency bulge highlights and lift crease shadows across the abdomen:
                     let bulge = l - base - high;
-                    l -= bulge * (stomach_flat * 0.88 * w_ab).clamp(0.0, 0.92);
+                    l -= bulge * (stomach_flat * 0.92 * w_ab).clamp(0.0, 0.96);
                     // Subtle vertical abdominal line contour
-                    let ab_side = bell2((u_body.abs() - 0.38) / 0.24, (py - stomach_y) / (body_h * 0.78));
-                    l -= 0.040 * stomach_flat * ab_side;
+                    let ab_side = bell2((u_body.abs() - 0.38) / 0.26, (py - stomach_y) / (body_h * 0.82));
+                    l -= 0.055 * stomach_flat * ab_side;
                     changed = true;
                 }
             }
@@ -1386,40 +1420,40 @@ pub fn apply(img: &mut Rgb32f, s: &DevelopSettings, px_per_long: f64) {
             if eye_brighten > 0.0 || eye_whiten > 0.0 || eye_clarity > 0.0 || brow_enhance.abs() > 1e-4 {
                 let er = bell2((px_x - fz.right_eye.0) / eye_rx, (py - fz.right_eye.1) / eye_ry);
                 let el = bell2((px_x - fz.left_eye.0) / eye_rx, (py - fz.left_eye.1) / eye_ry);
-                let eye_box = er.max(el).max(0.40 * bell2(u_face / 0.88, (v_face + 0.16) / 0.42));
+                let eye_box = er.max(el).max(0.45 * bell2(u_face / 0.88, (v_face + 0.16) / 0.44));
                 if eye_box > 1e-3 {
                     let w_sclera = sclera_weight(lab_eval, m_data.get(i).copied().unwrap_or(0.0)) * eye_box;
                     if eye_whiten > 0.0 && w_sclera > 1e-3 {
                         let kw = (eye_whiten * w_sclera).clamp(0.0, 1.0);
-                        l += (1.0 - l) * 0.22 * kw;
-                        a *= 1.0 - 0.82 * kw;
-                        b *= 1.0 - 0.82 * kw;
+                        l += (1.0 - l) * 0.30 * kw;
+                        a *= 1.0 - 0.88 * kw;
+                        b *= 1.0 - 0.88 * kw;
                         changed = true;
                     }
 
-                    let w_iris = eye_box * (1.0 - 0.65 * m_data.get(i).copied().unwrap_or(0.0)) * (0.25 + 0.75 * smoothstep(0.002, 0.024, detail));
+                    let w_iris = eye_box * (1.0 - 0.55 * m_data.get(i).copied().unwrap_or(0.0)) * (0.30 + 0.70 * smoothstep(0.0015, 0.022, detail));
                     if eye_brighten > 0.0 && w_iris > 1e-3 {
-                        l += eye_brighten * 0.16 * w_iris * (1.0 - 0.4 * l);
-                        a *= 1.0 + 0.18 * eye_brighten * w_iris;
-                        b *= 1.0 + 0.18 * eye_brighten * w_iris;
+                        l += eye_brighten * 0.22 * w_iris * (1.0 - 0.35 * l);
+                        a *= 1.0 + 0.24 * eye_brighten * w_iris;
+                        b *= 1.0 + 0.24 * eye_brighten * w_iris;
                         changed = true;
                     }
                     if eye_clarity > 0.0 && w_iris > 1e-3 {
-                        l += (high * 1.45 + mid * 0.75) * eye_clarity * w_iris;
+                        l += (high * 1.85 + mid * 0.95) * eye_clarity * w_iris;
                         changed = true;
                     }
                 }
 
                 if brow_enhance.abs() > 1e-4 {
-                    let br = bell2((px_x - fz.right_eye.0) / (eye_rx * 1.20), (py - (fz.right_eye.1 - eye_ry * 0.68)) / (eye_ry * 0.90));
-                    let bl = bell2((px_x - fz.left_eye.0) / (eye_rx * 1.20), (py - (fz.left_eye.1 - eye_ry * 0.68)) / (eye_ry * 0.90));
-                    let brow_box = br.max(bl).max(0.40 * bell2(u_face / 0.88, (v_face + 0.32) / 0.32));
-                    let dark_brow = (1.0 - smoothstep(0.42, 0.68, lab_eval[0])) * (0.30 + 0.70 * smoothstep(0.002, 0.022, detail));
+                    let br = bell2((px_x - fz.right_eye.0) / (eye_rx * 1.25), (py - (fz.right_eye.1 - eye_ry * 0.68)) / (eye_ry * 0.95));
+                    let bl = bell2((px_x - fz.left_eye.0) / (eye_rx * 1.25), (py - (fz.left_eye.1 - eye_ry * 0.68)) / (eye_ry * 0.95));
+                    let brow_box = br.max(bl).max(0.45 * bell2(u_face / 0.88, (v_face + 0.32) / 0.34));
+                    let dark_brow = (1.0 - smoothstep(0.45, 0.72, lab_eval[0])) * (0.30 + 0.70 * smoothstep(0.0015, 0.020, detail));
                     let w_brow = brow_box * dark_brow;
                     if w_brow > 1e-3 {
                         // Positive eyebrow_enhance deepens/darkens brows and adds crispness.
-                        l -= brow_enhance * 0.14 * w_brow;
-                        l += high * brow_enhance.max(0.0) * 0.85 * w_brow;
+                        l -= brow_enhance * 0.18 * w_brow;
+                        l += high * brow_enhance.max(0.0) * 1.05 * w_brow;
                         changed = true;
                     }
                 }
@@ -1429,17 +1463,17 @@ pub fn apply(img: &mut Rgb32f, s: &DevelopSettings, px_per_long: f64) {
             if teeth_whiten > 0.0 || lip_enhance.abs() > 1e-4 || lip_moisture > 0.0 {
                 let mouth_u = (px_x - mouth_cx) / mouth_rx;
                 let mouth_v = (py - fz.mouth_y) / mouth_ry;
-                let mouth_box = bell2(mouth_u, mouth_v).max(0.50 * bell2(u_face / 0.92, (v_face - 0.42) / 0.58));
+                let mouth_box = bell2(mouth_u, mouth_v).max(0.55 * bell2(u_face / 0.92, (v_face - 0.42) / 0.58));
                 if mouth_box > 1e-3 {
                     if teeth_whiten > 0.0 {
                         let w_teeth = teeth_weight(lab_eval, detail) * mouth_box;
                         if w_teeth > 1e-3 {
                             let kt = (teeth_whiten * w_teeth).clamp(0.0, 1.0);
-                            l += (1.0 - l) * 0.24 * kt;
+                            l += (1.0 - l) * 0.32 * kt;
                             if b > 0.0 {
-                                b *= 1.0 - 0.88 * kt;
+                                b *= 1.0 - 0.92 * kt;
                             }
-                            a *= 1.0 - 0.55 * kt;
+                            a *= 1.0 - 0.65 * kt;
                             changed = true;
                         }
                     }
@@ -1449,13 +1483,14 @@ pub fn apply(img: &mut Rgb32f, s: &DevelopSettings, px_per_long: f64) {
                         if w_lip > 1e-3 {
                             if lip_enhance.abs() > 1e-4 {
                                 let kl = lip_enhance * w_lip;
-                                a *= 1.0 + 0.68 * kl;
-                                b *= 1.0 + 0.26 * kl;
-                                l -= 0.036 * kl;
+                                a += 0.022 * kl;
+                                a *= 1.0 + 0.72 * kl;
+                                b *= 1.0 + 0.28 * kl;
+                                l -= 0.042 * kl;
                                 changed = true;
                             }
                             if lip_moisture > 0.0 {
-                                let sheen = (high.max(0.0) * 2.10 + mid.max(0.0) * 0.95 + 0.035 * smoothstep(0.45, 0.72, lab_eval[0])) * lip_moisture * w_lip;
+                                let sheen = (high.max(0.0) * 2.40 + mid.max(0.0) * 1.15 + 0.045 * smoothstep(0.42, 0.70, lab_eval[0])) * lip_moisture * w_lip;
                                 l += sheen;
                                 changed = true;
                             }
@@ -1471,17 +1506,17 @@ pub fn apply(img: &mut Rgb32f, s: &DevelopSettings, px_per_long: f64) {
                     if hair_luster > 0.0 {
                         let w_hair = hair_arch * (1.0 - smoothstep(0.68, 0.90, lab_eval[0])) * (0.25 + 0.75 * smoothstep(0.002, 0.024, detail));
                         if w_hair > 1e-3 {
-                            let sheen = mid.max(0.0) * 0.95 + high * 0.75;
-                            l += (sheen + 0.065 * l0) * hair_luster * w_hair;
+                            let sheen = mid.max(0.0) * 1.15 + high * 0.90;
+                            l += (sheen + 0.080 * l0) * hair_luster * w_hair;
                             changed = true;
                         }
                     }
                     if stray_hair > 0.0 {
                         // Thin isolated flyaway strands produce sharp high-frequency spikes (`high`) over a smooth guided base.
                         let spike = (high.abs() - 0.35 * mid.abs()).max(0.0);
-                        let w_fly = hair_arch * smoothstep(0.003, 0.028, spike);
+                        let w_fly = hair_arch * smoothstep(0.0025, 0.025, spike);
                         if w_fly > 1e-3 {
-                            l -= high * (stray_hair * 0.90 * w_fly).clamp(0.0, 0.95);
+                            l -= high * (stray_hair * 0.94 * w_fly).clamp(0.0, 0.98);
                             changed = true;
                         }
                     }
@@ -1599,5 +1634,33 @@ mod tests {
         assert!(lip_weight([0.52, 0.085, 0.030]) > 0.7);
         assert!(teeth_weight([0.82, 0.005, 0.020], 0.02) > 0.7);
         assert!(sclera_weight([0.78, 0.008, 0.010], 0.0) > 0.7);
+    }
+
+    #[test]
+    fn retouch_smooths_blemishes_and_pores_on_steep_3d_shaded_face() {
+        let (w, h) = (128, 128);
+        let mut orig = Rgb32f::new(w, h);
+        for y in 0..h {
+            for x in 0..w {
+                // Steep 3D directional lighting ramp across the face + micro-pore roughness + blemish at center
+                let ramp = 0.42 + 0.36 * (x as f32 / w as f32);
+                let pore = if (x + y) % 2 == 1 { 0.018 } else { -0.018 };
+                let dx = x as f32 - 64.0;
+                let dy = y as f32 - 64.0;
+                let blemish = if dx * dx + dy * dy < 25.0 { -0.065 } else { 0.0 };
+                let lab = [ramp + pore + blemish, 0.042, 0.052];
+                orig.data[y * w + x] = oklab_to_2020(lab);
+            }
+        }
+        let mut img = orig.clone();
+        let mut s = DevelopSettings::default();
+        s.retouch.skin_smooth = 75.0; // default skin_texture = 50.0
+        apply(&mut img, &s, 128.0);
+
+        let c_idx = 64 * w + 64;
+        let l_before = oklab_from_2020(orig.data[c_idx])[0];
+        let l_after = oklab_from_2020(img.data[c_idx])[0];
+        // The dark blemish + pore dip on the 3D-lit cheek must be strongly smoothed toward the local ramp (~0.60)
+        assert!(l_after - l_before > 0.035, "expected strong smoothing on 3D ramp: before={l_before}, after={l_after}");
     }
 }

@@ -496,7 +496,36 @@ impl WebApp {
         if !paths.is_empty() {
             let n = paths.len();
             match self.app.run("library.import", json!({"paths": paths})) {
-                Ok(_) => self.app.toast(ctx, format!("Added {n} photo{}", if n == 1 { "" } else { "s" })),
+                Ok(report) => {
+                    let target_id = report["imported"]
+                        .as_array()
+                        .and_then(|a| a.first())
+                        .and_then(|v| v.as_u64())
+                        .or_else(|| {
+                            report["restored"]
+                                .as_array()
+                                .and_then(|a| a.first())
+                                .and_then(|v| v.as_u64())
+                        })
+                        .or_else(|| {
+                            report["duplicates"]
+                                .as_array()
+                                .and_then(|a| a.first())
+                                .and_then(|d| d["existing"].as_u64())
+                        });
+                    if let Some(raw_id) = target_id {
+                        let pid = lightcraft_engine::catalog::PhotoId(raw_id);
+                        if !self.app.session.visible().contains(&pid) {
+                            self.app.session.source = lightcraft_engine::LibrarySource::All;
+                            self.app.session.filter = Default::default();
+                        }
+                        self.app.session.selection = lightcraft_engine::Selection::single(pid);
+                        if n == 1 || self.app.ui.right.is_edit_tool() {
+                            self.app.ui.view = lightcraft_ui_egui::state::ViewMode::Detail;
+                        }
+                    }
+                    self.app.toast(ctx, format!("Added {n} photo{}", if n == 1 { "" } else { "s" }));
+                }
                 Err(e) => log::warn!("import: {e}"),
             }
         }
