@@ -1141,12 +1141,14 @@ pub fn specs() -> Vec<CommandSpec> {
 
                     let want_auto_retouch = q.is_empty()
                         || actions.iter().any(|a| a == "autoretouch" || a == "auto_retouch")
-                        || (parsed_ai.is_none()
-                            && !dd.retouch.is_active()
-                            && (q.contains("auto retouch")
-                                || q.contains("auto-retouch")
-                                || q == "retouch"
-                                || q == "retouch portrait"));
+                        || (!dd.retouch.is_active()
+                            && (q.contains("retouch")
+                                || q.contains("beautif")
+                                || q.contains("portrait")
+                                || q.contains("fix skin")
+                                || q.contains("fix face")
+                                || q.contains("clean skin")
+                                || q.contains("enhance face")));
 
                     if want_auto_retouch {
                         let base_settings = lightcraft_develop::DevelopSettings::default();
@@ -1185,12 +1187,22 @@ pub fn specs() -> Vec<CommandSpec> {
                         r = analysis.recommended;
                     }
 
-                    // Only run local keyword heuristics when no structured AI JSON response was provided:
-                    if parsed_ai.is_none() && !q.is_empty() {
+                    // Run local keyword heuristics as a baseline before overlaying any structured AI JSON response:
+                    if !q.is_empty() {
                         if q.contains("reset") || q.contains("original") || q.contains("clear all") {
                             dd = lightcraft_develop::DevelopSettings::default();
                             r = lightcraft_develop::Retouch::default();
                             summary = "Reset all image adjustments to original.".to_string();
+                        }
+                        if q.contains("retouch") || q.contains("skin") || q.contains("beautif") || q.contains("fix face") {
+                            r.skin_smooth = r.skin_smooth.max(58.0);
+                            r.skin_tone_even = r.skin_tone_even.max(50.0);
+                            r.shine_control = r.shine_control.max(40.0);
+                            r.dark_circles = r.dark_circles.max(45.0);
+                            r.wrinkle_reduce = r.wrinkle_reduce.max(28.0);
+                            r.skin_radiance = r.skin_radiance.max(22.0);
+                            r.eye_brighten = r.eye_brighten.max(38.0);
+                            r.face_contour = r.face_contour.max(32.0);
                         }
                         if q.contains("natural") || q.contains("subtle") || q.contains("light retouch") {
                             r.skin_smooth = (r.skin_smooth.max(42.0) * 0.85).clamp(35.0, 55.0).round();
@@ -1659,7 +1671,11 @@ pub fn specs() -> Vec<CommandSpec> {
                     dd.retouch = r;
 
                     if id == active_id {
-                        diff_notes = describe_develop_diff(&prev_dd, &dd);
+                        let baseline_dd = p
+                            .get("beforeSettings")
+                            .and_then(|v| lightcraft_develop::DevelopSettings::from_json(v).ok())
+                            .unwrap_or_else(|| prev_dd.clone());
+                        diff_notes = describe_develop_diff(&baseline_dd, &dd);
                     }
 
                     if dd != prev_dd

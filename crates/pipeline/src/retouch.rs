@@ -51,14 +51,15 @@ pub fn skin_weight(lab: [f32; 3]) -> f32 {
     if !l.is_finite() || !a.is_finite() || !b.is_finite() {
         return 0.0;
     }
-    // Skin tones are warm (a > 0 and b > 0) with low-to-moderate chroma and non-extreme lightness.
-    // Rec.2020 primaries produce slightly smaller (a, b) chroma than sRGB, so keep the lower
-    // chroma/lightness ramps generous while still rejecting negative-a sky and foliage.
+    // Skin tones are warm (a > 0 and b > 0) or rosy/fair (a > 0, b slightly negative) with
+    // low-to-moderate chroma and non-extreme lightness. Rec.2020 primaries produce slightly smaller
+    // (a, b) chroma than sRGB, so keep the lower chroma/lightness ramps generous while still
+    // rejecting negative-a sky and foliage.
     let c = a.hypot(b);
-    let hue = b.atan2(a); // radians; human skin clusters around 0.10..1.48 rad (~6°..85°)
+    let hue = b.atan2(a); // radians; human skin clusters around -0.25..1.48 rad (~-14°..85°)
     let w_l = smoothstep(0.05, 0.16, l) * (1.0 - smoothstep(0.92, 0.995, l));
     let w_c = smoothstep(0.003, 0.013, c) * (1.0 - smoothstep(0.24, 0.36, c));
-    let w_h = smoothstep(0.04, 0.26, hue) * (1.0 - smoothstep(1.30, 1.56, hue));
+    let w_h = smoothstep(-0.32, 0.06, hue) * (1.0 - smoothstep(1.30, 1.56, hue));
     (w_l * w_c * w_h).clamp(0.0, 1.0)
 }
 

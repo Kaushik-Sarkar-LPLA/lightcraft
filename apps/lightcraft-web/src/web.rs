@@ -520,8 +520,12 @@ impl WebApp {
                             self.app.session.filter = Default::default();
                         }
                         self.app.session.selection = lightcraft_engine::Selection::single(pid);
-                        if n == 1 || self.app.ui.right.is_edit_tool() {
-                            self.app.ui.view = lightcraft_ui_egui::state::ViewMode::Detail;
+                        self.app.ui.view = lightcraft_ui_egui::state::ViewMode::Detail;
+                        if self.app.ui.right == lightcraft_ui_egui::state::RightPanel::None {
+                            self.app.ui.right = lightcraft_ui_egui::state::RightPanel::Edit;
+                        }
+                        if !self.app.ui.single_panel && !self.app.ui.section_open("retouch") {
+                            self.app.ui.open_sections.push("retouch".into());
                         }
                     }
                     self.app.toast(ctx, format!("Added {n} photo{}", if n == 1 { "" } else { "s" }));

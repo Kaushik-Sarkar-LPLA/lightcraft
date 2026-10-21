@@ -105,6 +105,7 @@ pub fn send_message(app: &mut LightcraftApp, ctx: &egui::Context, prompt: &str, 
     if cfg!(target_arch = "wasm32") {
         // On Web, dispatch every chat message directly to Gemini Vision so the assistant responds
         // intelligently without pushing a synthetic local placeholder message.
+        let telemetry = app.run("retouch.analyze", json!({})).unwrap_or_else(|_| json!({}));
         let is_question = lower.starts_with("what")
             || lower.starts_with("how")
             || lower.starts_with("why")
@@ -115,7 +116,6 @@ pub fn send_message(app: &mut LightcraftApp, ctx: &egui::Context, prompt: &str, 
         if !is_question {
             let _ = app.run("retouch.aiApply", json!({"prompt": clean_prompt, "allSelected": all_selected}));
         }
-        let telemetry = app.run("retouch.analyze", json!({})).unwrap_or_else(|_| json!({}));
         let history: Vec<serde_json::Value> = app
             .ui
             .ai_messages
