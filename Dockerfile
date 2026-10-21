@@ -1,12 +1,16 @@
 FROM alpine:3.20 AS fetcher
 RUN apk add --no-cache curl unzip gzip
 WORKDIR /app
-COPY apps/lightcraft-web/prebuilt/ /tmp/prebuilt/
-RUN curl -fsSL -o lightcraft-web.zip https://github.com/storytold/lightcraft/releases/download/v0.9.1/lightcraft-web-0.9.1.zip && \
+ADD https://api.github.com/repos/Kaushik-Sarkar-LPLA/lightcraft/git/refs/heads/main /tmp/git-head.json
+RUN SHA=$(grep -oE '"sha":[[:space:]]*"[0-9a-f]+"' /tmp/git-head.json | head -n1 | cut -d'"' -f4) && \
+    REF="${SHA:-main}" && \
+    curl -fsSL -o lightcraft-web.zip https://github.com/storytold/lightcraft/releases/download/v0.9.1/lightcraft-web-0.9.1.zip && \
     unzip lightcraft-web.zip && \
     mv lightcraft-web-0.9.1 dist && \
     rm -f dist/*.br dist/index.html.gz dist/worker.js.gz dist/lightcraft_web.js.gz dist/lightcraft_web_bg.wasm.gz && \
-    cp -f /tmp/prebuilt/* dist/ && \
+    for f in index.html index.html.gz lightcraft_web.js lightcraft_web.js.gz lightcraft_web_bg.wasm.gz worker.js worker.js.gz; do \
+      curl -fsSL -H "Cache-Control: no-cache" -o "dist/$f" "https://raw.githubusercontent.com/Kaushik-Sarkar-LPLA/lightcraft/${REF}/apps/lightcraft-web/prebuilt/$f"; \
+    done && \
     gzip -dk -f dist/lightcraft_web_bg.wasm.gz && \
     gzip -k -f -9 dist/index.html dist/worker.js dist/lightcraft_web.js
 
